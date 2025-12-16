@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from upm.core.model import AngleKey, BondKey, Requirements, ResolvedFF, canonicalize_angle_key, canonicalize_bond_key
+from upm.core.model import AngleKey, BondKey, DihedralKey, Requirements, ResolvedFF, canonicalize_angle_key, canonicalize_bond_key
 from upm.core.tables import normalize_angles, normalize_atom_types, normalize_bonds
 
 
@@ -26,6 +26,7 @@ class MissingTermsError(ValueError):
     missing_atom_types: tuple[str, ...] = ()
     missing_bond_types: tuple[BondKey, ...] = ()
     missing_angle_types: tuple[AngleKey, ...] = ()
+    missing_dihedral_types: tuple[DihedralKey, ...] = ()
 
     def __init__(
         self,
@@ -33,10 +34,12 @@ class MissingTermsError(ValueError):
         missing_atom_types: list[str] | tuple[str, ...] = (),
         missing_bond_types: list[BondKey] | tuple[BondKey, ...] = (),
         missing_angle_types: list[AngleKey] | tuple[AngleKey, ...] = (),
+        missing_dihedral_types: list[DihedralKey] | tuple[DihedralKey, ...] = (),
     ) -> None:
         atom = tuple(sorted(set(missing_atom_types)))
         bonds = tuple(sorted(set(missing_bond_types)))
         angles = tuple(sorted(set(missing_angle_types)))
+        dihedrals = tuple(sorted(set(missing_dihedral_types)))
 
         parts: list[str] = []
         if atom:
@@ -45,6 +48,8 @@ class MissingTermsError(ValueError):
             parts.append(f"missing required bond_types: {list(bonds)!r}")
         if angles:
             parts.append(f"missing required angle_types: {list(angles)!r}")
+        if dihedrals:
+            parts.append(f"missing required dihedral_types: {list(dihedrals)!r}")
 
         msg = "; ".join(parts) if parts else "missing required terms"
         super().__init__(msg)
@@ -52,9 +57,15 @@ class MissingTermsError(ValueError):
         object.__setattr__(self, "missing_atom_types", atom)
         object.__setattr__(self, "missing_bond_types", bonds)
         object.__setattr__(self, "missing_angle_types", angles)
+        object.__setattr__(self, "missing_dihedral_types", dihedrals)
 
 
-def resolve_minimal(tables: Mapping[str, Any], requirements: Requirements) -> ResolvedFF:
+def resolve_minimal(
+    tables: Mapping[str, Any],
+    requirements: Requirements,
+    *,
+    allow_missing: bool = False,
+) -> ResolvedFF | tuple[ResolvedFF, MissingTermsError]:
     """Resolve a minimal subset of canonical tables needed by `requirements`.
 
     Args:
@@ -63,10 +74,12 @@ def resolve_minimal(tables: Mapping[str, Any], requirements: Requirements) -> Re
         requirements: canonical Requirements.
 
     Returns:
-        ResolvedFF containing subset DataFrames.
+        - If allow_missing=False (default): ResolvedFF containing subset DataFrames.
+        - If allow_missing=True: (ResolvedFF, MissingTermsError) where the error instance
+          carries deterministic missing lists (possibly empty).
 
     Raises:
-        MissingTermsError: if any required atom_types or bond_types are missing.
+        MissingTermsError: if allow_missing=False and any required terms are missing.
         TypeError/ValueError: for invalid inputs or missing required tables.
     """
     import pandas as pd
@@ -196,18 +209,41 @@ def resolve_minimal(tables: Mapping[str, Any], requirements: Requirements) -> Re
             angles_subset = normalize_angles(angles_subset)
 
     # ------------------------
-    # Missing-term handling (hard-error)
+    # dihedrals (v0.1.1 schema forward-compat)
     # ------------------------
-    if missing_atom_types or missing_bond_types or missing_angle_types:
-        raise MissingTermsError(
-            missing_atom_types=missing_atom_types,
-            missing_bond_types=missing_bond_types,
-            missing_angle_types=missing_angle_types,
-        )
+    # v0.1.1 does not resolve dihedrals yet. If a caller supplies dihedral requirements,
+    # treat all requested dihedrals as missing deterministically.
+    missing_dihedral_types: list[DihedralKey] = []
+    if requirements.dihedral_types:
+        missing_dihedral_types = sorted(set(requirements.dihedral_types))
 
-    return ResolvedFF(
+    # ------------------------
+    # Missing-term handling
+    # ------------------------
+    missing = MissingTermsError(
+        missing_atom_types=missing_atom_types,
+        missing_bond_types=missing_bond_types,
+        missing_angle_types=missing_angle_types,
+        missing_dihedral_types=missing_dihedral_types,
+    )
+
+    resolved = ResolvedFF(
         requirements=requirements,
         atom_types=atom_subset,
         bonds=bonds_subset,
         angles=angles_subset,
     )
+
+    if (
+        missing.missing_atom_types
+        or missing.missing_bond_types
+        or missing.missing_angle_types
+        or missing.missing_dihedral_types
+    ):
+        if allow_missing:
+            return resolved, missing
+        raise missing
+
+    if allow_missing:
+        return resolved, missing
+    return resolved

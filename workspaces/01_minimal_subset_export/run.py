@@ -89,7 +89,13 @@ def main() -> None:
         minimal_tables["bonds"] = resolved.bonds
 
     out_frc = outputs / "minimal.frc"
-    write_frc(out_frc, tables=minimal_tables, unknown_sections=bundle.raw["unknown_sections"], mode="minimal")
+    write_frc(
+        out_frc,
+        tables=minimal_tables,
+        unknown_sections=bundle.raw["unknown_sections"],
+        include_raw=True,
+        mode="minimal",
+    )
 
     # Reimport and assert only required terms exist
     tables_min, unknown_min = read_frc(out_frc)
@@ -111,8 +117,8 @@ def main() -> None:
         if "bonds" in tables_min and len(tables_min["bonds"]) > 0:
             raise SystemExit("expected zero bonds in minimal export")
 
-    # Unknowns preserved
-    if unknown_min.get("#unsupported_section") != unknown_full.get("#unsupported_section"):
+    # Unknowns preserved (ordered list)
+    if unknown_min != unknown_full:
         raise SystemExit("unknown section did not roundtrip")
 
     # Deterministic empty/no missing file: remove if exists

@@ -57,7 +57,13 @@ def test_at1_import_export_full_roundtrip_via_bundle(tmp_path: Path) -> None:
     # Export full from bundle
     bundle = load_package(pkg_root)
     out_path = tmp_path / "full_export.frc"
-    write_frc(out_path, tables=bundle.tables, unknown_sections=bundle.raw["unknown_sections"], mode="full")
+    write_frc(
+        out_path,
+        tables=bundle.tables,
+        unknown_sections=bundle.raw["unknown_sections"],
+        include_raw=True,
+        mode="full",
+    )
 
     # Re-import exported frc and compare
     tables2, unknown2 = read_frc(out_path)
@@ -66,5 +72,4 @@ def test_at1_import_export_full_roundtrip_via_bundle(tmp_path: Path) -> None:
     pd.testing.assert_frame_equal(tables2["bonds"], tables1["bonds"], check_like=False)
     pd.testing.assert_frame_equal(tables2["angles"], tables1["angles"], check_like=False)
 
-    assert unknown2.get("#unsupported_section") == unknown1.get("#unsupported_section")
-    assert unknown2.get("#preamble") == unknown1.get("#preamble")
+    assert unknown2 == unknown1

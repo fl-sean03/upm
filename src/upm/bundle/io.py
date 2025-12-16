@@ -1,10 +1,17 @@
-"""Bundle save/load (CSV) for UPM v0.1.
+"""Bundle save/load (CSV) for UPM v0.1.1.
 
 A bundle is a folder rooted at `packages/<name>/<version>/` containing:
 - manifest.json
 - tables/*.csv
 - raw/source.frc
 - raw/unknown_sections.json
+
+Unknown/raw sections persistence (v0.1.1):
+- Canonical on-disk format is an *ordered list* of objects:
+  `[{ "header": str, "body": [str, ...] }, ...]`
+  This preserves encounter order and supports duplicate section headers.
+- Legacy format (v0.1.0): `{ "<header>": ["<body line>", ...], ... }`
+  is still accepted on load and is converted deterministically by sorted header.
 
 This module intentionally avoids any dependency on codecs/CLI to prevent cycles.
 """
@@ -26,7 +33,7 @@ class PackageBundle:
     root: Path
     manifest: dict[str, Any]
     tables: dict[str, "Any"]  # pandas.DataFrame; kept Any to avoid importing pandas at import time
-    raw: dict[str, Any]  # {"source_text": str, "unknown_sections": dict[str, list[str]]}
+    raw: dict[str, Any]  # {"source_text": str, "unknown_sections": list[{"header": str, "body": list[str]}]}
 
 
 def _write_text_exact(path: Path, text: str) -> None:
@@ -50,6 +57,48 @@ def _table_csv_path(root: Path, table_name: str) -> Path:
     return root / "tables" / f"{table_name}.csv"
 
 
+def _coerce_unknown_sections_ordered(obj: Any | None) -> list[dict[str, Any]]:
+    """Coerce unknown/raw sections into canonical ordered-list format.
+
+    Accepts:
+      - None -> []
+      - canonical list format:
+          [{"header": str, "body": [str, ...]}, ...]
+      - legacy dict format:
+          {"<header>": ["<body line>", ...], ...}
+        (converted deterministically by sorted header)
+
+    Raises:
+        TypeError/ValueError for invalid shapes.
+    """
+    if obj is None:
+        return []
+    if isinstance(obj, dict):
+        out: list[dict[str, Any]] = []
+        for h in sorted(obj.keys()):
+            body = obj[h]
+            if not isinstance(body, list) or not all(isinstance(x, str) for x in body):
+                raise ValueError("unknown_sections: expected dict[str, list[str]] (legacy format)")
+            out.append({"header": str(h), "body": list(body)})
+        return out
+    if isinstance(obj, list):
+        out2: list[dict[str, Any]] = []
+        for i, item in enumerate(obj):
+            if not isinstance(item, dict):
+                raise ValueError(f"unknown_sections[{i}]: expected object with 'header' and 'body'")
+            if "header" not in item or "body" not in item:
+                raise ValueError(f"unknown_sections[{i}]: missing 'header' or 'body'")
+            header = item["header"]
+            body = item["body"]
+            if not isinstance(header, str):
+                raise ValueError(f"unknown_sections[{i}].header: expected str")
+            if not isinstance(body, list) or not all(isinstance(x, str) for x in body):
+                raise ValueError(f"unknown_sections[{i}].body: expected list[str]")
+            out2.append({"header": header, "body": list(body)})
+        return out2
+    raise TypeError(f"unknown_sections: expected list or dict, got {type(obj).__name__}")
+
+
 def save_package(
     root: Path,
     *,
@@ -57,7 +106,7 @@ def save_package(
     version: str,
     tables: dict[str, "Any"],  # pandas.DataFrame
     source_text: str,
-    unknown_sections: dict[str, list[str]] | None = None,
+    unknown_sections: Any | None = None,
     units: dict[str, Any] | None = None,
     nonbonded: dict[str, Any] | None = None,
     features: list[str] | None = None,
@@ -69,8 +118,7 @@ def save_package(
     tables_dir.mkdir(parents=True, exist_ok=True)
     raw_dir.mkdir(parents=True, exist_ok=True)
 
-    if unknown_sections is None:
-        unknown_sections = {}
+    unknown_sections_ordered = _coerce_unknown_sections_ordered(unknown_sections)
 
     # ---- write raw blobs (exact) ----
     source_path_rel = Path("raw") / "source.frc"
@@ -79,7 +127,7 @@ def save_package(
 
     unknown_path_rel = Path("raw") / "unknown_sections.json"
     unknown_path = root / unknown_path_rel
-    _write_json_stable(unknown_path, unknown_sections)
+    _write_json_stable(unknown_path, unknown_sections_ordered)
 
     # ---- normalize tables then write CSVs ----
     # Normalize for deterministic column ordering + key canonicalization.
@@ -154,8 +202,7 @@ def load_package(root: Path, *, validate_hashes: bool = False) -> PackageBundle:
 
     source_text = source_path.read_text(encoding="utf-8")
     unknown_sections_obj = _read_json(unknown_path)
-    if not isinstance(unknown_sections_obj, dict):
-        raise ValueError("raw/unknown_sections.json: expected JSON object mapping section -> [lines...]")
+    unknown_sections_ordered = _coerce_unknown_sections_ordered(unknown_sections_obj)
 
     # ---- read tables from manifest ----
     import pandas as pd  # local import
@@ -210,5 +257,5 @@ def load_package(root: Path, *, validate_hashes: bool = False) -> PackageBundle:
         root=root,
         manifest=manifest,
         tables=tables_norm,
-        raw={"source_text": source_text, "unknown_sections": unknown_sections_obj},
+        raw={"source_text": source_text, "unknown_sections": unknown_sections_ordered},
     )

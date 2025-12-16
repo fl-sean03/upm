@@ -1,4 +1,4 @@
-"""`upm export-frc` command (v0.1).
+"""`upm export-frc` command (v0.1.1).
 
 Exports an MSI `.frc` from a package bundle.
 
@@ -6,8 +6,15 @@ Modes:
 - full: export all supported rows present in the package tables
 - minimal: load a Requirements JSON, resolve a minimal subset, export only required rows
 
-Unknown/unsupported sections are preserved and appended to the output for lossless
-roundtrips (deterministic order).
+Raw/unknown sections:
+- preserved on import (stored in the bundle)
+- omitted by default on export
+- re-emitted only when `--include-raw` is set (deterministic encounter order)
+
+Missing-term modes (minimal export only):
+- default: hard error if any required term is missing (exit code 2)
+- `--allow-missing`: export anyway, write `missing.json`, exit code 1 if any missing
+- `--allow-missing --force`: export anyway, write `missing.json`, exit code 0
 """
 
 from __future__ import annotations
@@ -56,6 +63,26 @@ def register(app: typer.Typer) -> None:
             "--requirements",
             help="Requirements JSON path (required for --mode minimal).",
         ),
+        include_raw: bool = typer.Option(
+            False,
+            "--include-raw",
+            help="Include raw/unknown .frc sections preserved in the package bundle (deterministic encounter order).",
+        ),
+        allow_missing: bool = typer.Option(
+            False,
+            "--allow-missing",
+            help="Allow missing required terms in minimal export; write missing report and continue.",
+        ),
+        force: bool = typer.Option(
+            False,
+            "--force",
+            help="Exit 0 even if missing terms exist (only meaningful with --allow-missing).",
+        ),
+        missing_report: Optional[str] = typer.Option(
+            None,
+            "--missing-report",
+            help="Path to write missing.json (default: alongside --out as missing.json).",
+        ),
     ) -> None:
         """Export an MSI `.frc` from a UPM package bundle."""
         if mode not in {"full", "minimal"}:
@@ -68,14 +95,22 @@ def register(app: typer.Typer) -> None:
 
         bundle = load_package(root)
 
-        unknown_sections = bundle.raw.get("unknown_sections", {})
+        unknown_sections = bundle.raw.get("unknown_sections", [])
         if unknown_sections is None:
-            unknown_sections = {}
+            unknown_sections = []
 
         out_path = Path(out)
 
         if mode == "full":
-            write_frc(out_path, tables=bundle.tables, unknown_sections=unknown_sections, mode="full")
+            if allow_missing or force:
+                raise typer.BadParameter("--allow-missing/--force are only valid with --mode minimal")
+            write_frc(
+                out_path,
+                tables=bundle.tables,
+                unknown_sections=unknown_sections,
+                include_raw=include_raw,
+                mode="full",
+            )
             typer.echo(str(out_path))
             return
 
@@ -83,11 +118,19 @@ def register(app: typer.Typer) -> None:
         if not requirements:
             raise typer.BadParameter("--requirements is required for --mode minimal")
 
+        if force and not allow_missing:
+            raise typer.BadParameter("--force requires --allow-missing")
+
         req = read_requirements_json(requirements)
-        try:
-            resolved = resolve_minimal(bundle.tables, req)
-        except MissingTermsError as e:
-            raise typer.BadParameter(str(e)) from e
+
+        if allow_missing:
+            resolved, missing = resolve_minimal(bundle.tables, req, allow_missing=True)
+        else:
+            try:
+                resolved = resolve_minimal(bundle.tables, req)
+            except MissingTermsError as e:
+                raise typer.BadParameter(str(e)) from e
+            missing = None
 
         tables_subset: dict[str, object] = {"atom_types": resolved.atom_types}
         if resolved.bonds is not None:
@@ -95,5 +138,37 @@ def register(app: typer.Typer) -> None:
         if resolved.angles is not None:
             tables_subset["angles"] = resolved.angles
 
-        write_frc(out_path, tables=tables_subset, unknown_sections=unknown_sections, mode="minimal")
+        write_frc(
+            out_path,
+            tables=tables_subset,
+            unknown_sections=unknown_sections,
+            include_raw=include_raw,
+            mode="minimal",
+        )
         typer.echo(str(out_path))
+
+        # Missing report policy:
+        # - Only written when --allow-missing is set
+        # - Always written (even if all lists are empty)
+        # - Deterministic schema/ordering
+        if allow_missing and missing is not None:
+            report_path = Path(missing_report) if missing_report else out_path.with_name("missing.json")
+            report_obj = {
+                "angle_types": [list(x) for x in missing.missing_angle_types],
+                "atom_types": list(missing.missing_atom_types),
+                "bond_types": [list(x) for x in missing.missing_bond_types],
+                "dihedral_types": [list(x) for x in missing.missing_dihedral_types],
+            }
+            report_text = __import__("json").dumps(report_obj, indent=2, sort_keys=True) + "\n"
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            report_path.write_text(report_text, encoding="utf-8")
+
+            has_missing = bool(
+                missing.missing_atom_types
+                or missing.missing_bond_types
+                or missing.missing_angle_types
+                or missing.missing_dihedral_types
+            )
+            if has_missing and not force:
+                raise typer.Exit(code=1)
+        return

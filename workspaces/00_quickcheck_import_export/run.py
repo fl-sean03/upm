@@ -73,7 +73,13 @@ def main() -> None:
 
     full_out = outputs / "full_export.frc"
     bundle1 = load_package(pkg_root)
-    write_frc(full_out, tables=bundle1.tables, unknown_sections=bundle1.raw["unknown_sections"], mode="full")
+    write_frc(
+        full_out,
+        tables=bundle1.tables,
+        unknown_sections=bundle1.raw["unknown_sections"],
+        include_raw=True,
+        mode="full",
+    )
 
     tables2, unknown2 = read_frc(full_out)
 
@@ -85,17 +91,16 @@ def main() -> None:
     except AssertionError:
         ok_tables = False
 
-    # Compare unknown preservation
-    ok_unknown = unknown2.get("#unsupported_section") == unknown1.get("#unsupported_section") and unknown2.get(
-        "#preamble"
-    ) == unknown1.get("#preamble")
+    # Compare unknown preservation (ordered list of sections)
+    ok_unknown = unknown2 == unknown1
 
     report = {
         "package_root": str(pkg_root),
         "full_export_path": str(full_out),
         "tables_equal": ok_tables,
         "unknown_sections_equal": ok_unknown,
-        "unknown_sections_keys": sorted(list(unknown2.keys())),
+        "unknown_sections_len": len(unknown2),
+        "unknown_sections_headers": [x.get("header") for x in unknown2],
     }
     _write_json(outputs / "roundtrip_report.json", report)
 

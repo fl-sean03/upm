@@ -47,13 +47,16 @@ def test_parse_frc_text_supported_and_unknown_sections_shape() -> None:
     assert "bonds" in tables
     assert "angles" in tables
 
-    # Unknown preservation:
-    # - key = exact header line
-    # - value = list of body lines only, exact content, no trailing newline
-    assert unknown["#unsupported_section"] == ["line1", "  line2 with leading spaces", ""]
-    assert unknown["#preamble"] == [
-        "This is a preamble line that must be preserved.",
-        "Another preamble line.",
+    # Unknown preservation (ordered raw section list):
+    assert unknown == [
+        {
+            "header": "#preamble",
+            "body": [
+                "This is a preamble line that must be preserved.",
+                "Another preamble line.",
+            ],
+        },
+        {"header": "#unsupported_section", "body": ["line1", "  line2 with leading spaces", ""]},
     ]
 
     # Ensure parse normalized & deterministic ordering:
@@ -74,7 +77,7 @@ def test_export_full_then_reimport_roundtrip_tables_and_unknown(tmp_path: Path) 
     tables1, unknown1 = parse_frc_text(_fixture_frc_text())
 
     out_path = tmp_path / "out.frc"
-    write_frc(out_path, tables=tables1, unknown_sections=unknown1, mode="full")
+    write_frc(out_path, tables=tables1, unknown_sections=unknown1, include_raw=True, mode="full")
 
     tables2, unknown2 = read_frc(out_path)
 
@@ -83,13 +86,8 @@ def test_export_full_then_reimport_roundtrip_tables_and_unknown(tmp_path: Path) 
     pd.testing.assert_frame_equal(tables2["bonds"], tables1["bonds"], check_like=False)
     pd.testing.assert_frame_equal(tables2["angles"], tables1["angles"], check_like=False)
 
-    # Unknown sections should roundtrip.
-    assert unknown2["#unsupported_section"] == unknown1["#unsupported_section"]
-
-    # `#preamble` is a synthetic pseudo-section used by the parser to preserve any
-    # text before the first real `#...` section header. It should roundtrip
-    # unchanged when provided to the exporter.
-    assert unknown2.get("#preamble") == unknown1.get("#preamble")
+    # Unknown sections should roundtrip in deterministic encounter order.
+    assert unknown2 == unknown1
 
 
 def test_export_is_deterministic_bytes(tmp_path: Path) -> None:
@@ -99,5 +97,16 @@ def test_export_is_deterministic_bytes(tmp_path: Path) -> None:
     p2 = tmp_path / "b.frc"
     write_frc(p1, tables=tables, unknown_sections=unknown, mode="full")
     write_frc(p2, tables=tables, unknown_sections=unknown, mode="full")
+
+    assert p1.read_bytes() == p2.read_bytes()
+
+
+def test_export_is_deterministic_bytes_include_raw(tmp_path: Path) -> None:
+    tables, unknown = parse_frc_text(_fixture_frc_text())
+
+    p1 = tmp_path / "a_raw.frc"
+    p2 = tmp_path / "b_raw.frc"
+    write_frc(p1, tables=tables, unknown_sections=unknown, include_raw=True, mode="full")
+    write_frc(p2, tables=tables, unknown_sections=unknown, include_raw=True, mode="full")
 
     assert p1.read_bytes() == p2.read_bytes()

@@ -46,7 +46,13 @@ def test_bundle_roundtrip_csv_and_manifest_hashes(tmp_path: Path) -> None:
     norm_in = normalize_tables(tables_in)
 
     source_text = "# demo frc\n#atom_types\n...\n"
-    unknown_sections = {"#unsupported_section": ["line1", "line2"]}
+
+    # Unknown/raw sections are persisted as an *ordered list* (v0.1.1), preserving
+    # encounter order and allowing duplicate headers.
+    unknown_sections = [
+        {"header": "#unsupported_section", "body": ["line1", "line2"]},
+        {"header": "#unsupported_section", "body": ["line3"]},
+    ]
 
     manifest = save_package(
         root,

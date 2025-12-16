@@ -10,6 +10,16 @@ from upm.core.model import Requirements
 from upm.core.resolve import MissingTermsError, resolve_minimal
 
 
+def _find_raw_section_body(unknown_sections: list[dict[str, object]], header: str) -> list[str] | None:
+    for item in unknown_sections:
+        if item.get("header") == header:
+            body = item.get("body")
+            if isinstance(body, list) and all(isinstance(x, str) for x in body):
+                return body
+            raise AssertionError(f"raw section {header!r} has invalid body shape")
+    return None
+
+
 def _fixture_frc_text() -> str:
     # Contains extra terms so minimal resolver can subset.
     return "\n".join(
@@ -62,6 +72,7 @@ def test_at2_resolve_minimal_subset_and_export_reimport(tmp_path: Path) -> None:
     assert list(resolved.angles["t3"]) == ["h"]
 
     # Export minimal and re-import: must contain only required supported rows
+    # Raw/unknown sections are omitted by default.
     out_path = tmp_path / "min.frc"
     write_frc(
         out_path,
@@ -78,8 +89,19 @@ def test_at2_resolve_minimal_subset_and_export_reimport(tmp_path: Path) -> None:
     assert list(tables_min["angles"]["t2"]) == ["c3"]
     assert list(tables_min["angles"]["t3"]) == ["h"]
 
-    # Unknown section preservation
-    assert unknown_min.get("#unsupported_section") == unknown.get("#unsupported_section")
+    assert unknown_min == []
+
+    # If raw sections are requested, unknown sections must roundtrip deterministically.
+    out_path_raw = tmp_path / "min_with_raw.frc"
+    write_frc(
+        out_path_raw,
+        tables={"atom_types": resolved.atom_types, "bonds": resolved.bonds, "angles": resolved.angles},
+        unknown_sections=unknown,
+        include_raw=True,
+        mode="minimal",
+    )
+    _tables_min_raw, unknown_min_raw = read_frc(out_path_raw)
+    assert _find_raw_section_body(unknown_min_raw, "#unsupported_section") == ["kept"]
 
 
 def test_at3_missing_atom_types_error_lists_missing() -> None:
@@ -150,10 +172,11 @@ def test_minimal_export_from_bundle_matches_requirements_exactly(tmp_path: Path)
         mode="minimal",
     )
 
-    tables_min, _unknown_min = read_frc(out_path)
+    tables_min, unknown_min = read_frc(out_path)
     assert list(tables_min["atom_types"]["atom_type"]) == ["c3", "h"]
     assert list(tables_min["bonds"]["t1"]) == ["c3"]
     assert list(tables_min["bonds"]["t2"]) == ["h"]
     assert list(tables_min["angles"]["t1"]) == ["h"]
     assert list(tables_min["angles"]["t2"]) == ["c3"]
     assert list(tables_min["angles"]["t3"]) == ["h"]
+    assert unknown_min == []
