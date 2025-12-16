@@ -79,7 +79,7 @@ def parse_frc_text(text: str) -> tuple[dict[str, "Any"], list[dict[str, Any]]]:
         if header_key == "#atom_types":
             atom_types_rows.extend(_parse_atom_types(body_lines))
         elif header_key == "#quadratic_bond":
-            bonds_rows.extend(_parse_quadratic_bond(body_lines))
+            bonds_rows.extend(_parse_quadratic_bond(body_lines, source_default=header_suffix))
         elif header_key == "#quadratic_angle":
             angles_rows.extend(_parse_quadratic_angle(body_lines, source_default=header_suffix))
         elif header_key == "#nonbond(12-6)":
@@ -282,10 +282,23 @@ def _strip_inline_comment(s: str) -> str:
 
 def _is_ignorable_line(line: str) -> bool:
     s = line.strip()
-    return (not s) or s.startswith("!") or s.startswith(";") or s.startswith("#")
+    # Many MSI/CVFF assets include ">" prose lines inside sections.
+    return (not s) or s.startswith("!") or s.startswith(";") or s.startswith("#") or s.startswith(">")
 
 
 def _parse_atom_types(lines: list[str]) -> list[dict[str, Any]]:
+    """Parse `#atom_types` section rows.
+
+    Accepts both:
+    - Minimal rows: `atom_type element mass_amu [notes...]`
+    - CVFF/MSI asset-style rows with leading columns:
+        `ver ref atom_type mass_amu element [connections...] [comment...]`
+
+    Robustness:
+    - If the line begins with two "metadata" tokens (ver, ref) and then contains
+      (atom_type, mass, element), we parse that layout.
+    - Otherwise we fall back to the minimal layout.
+    """
     rows: list[dict[str, Any]] = []
     for raw in lines:
         if _is_ignorable_line(raw):
@@ -294,12 +307,48 @@ def _parse_atom_types(lines: list[str]) -> list[dict[str, Any]]:
         if not line.strip():
             continue
         toks = line.split()
-        if len(toks) < 1:
+        if not toks:
             continue
 
+        atom_type: str
+        element: str | None
+        mass: float | None
+        notes: str | None
+
+        # Asset-style: ver ref type mass element ...
+        if len(toks) >= 5:
+            try:
+                float(toks[0])  # ver
+                int(float(toks[1]))  # ref (often integer-like)
+                float(toks[3])  # mass
+            except Exception:
+                pass
+            else:
+                atom_type = toks[2]
+                mass = float(toks[3])
+                element = toks[4]
+                notes = " ".join(toks[5:]) if len(toks) >= 6 else None
+                rows.append(
+                    {
+                        "atom_type": atom_type,
+                        "element": element,
+                        "mass_amu": mass,
+                        "vdw_style": "lj_ab_12_6",
+                        "lj_a": None,
+                        "lj_b": None,
+                        "notes": notes,
+                    }
+                )
+                continue
+
+        # Minimal: type element mass ...
         atom_type = toks[0]
         element = toks[1] if len(toks) >= 2 else None
-        mass = float(toks[2]) if len(toks) >= 3 else None
+        try:
+            mass = float(toks[2]) if len(toks) >= 3 else None
+        except Exception:
+            # Keep tolerant: if mass is malformed, treat as missing and keep remaining as notes.
+            mass = None
         notes = " ".join(toks[3:]) if len(toks) >= 4 else None
 
         rows.append(
@@ -307,7 +356,6 @@ def _parse_atom_types(lines: list[str]) -> list[dict[str, Any]]:
                 "atom_type": atom_type,
                 "element": element,
                 "mass_amu": mass,
-                # vdw_style/lj_a/lj_b populated later from nonbond section
                 "vdw_style": "lj_ab_12_6",
                 "lj_a": None,
                 "lj_b": None,
@@ -317,22 +365,77 @@ def _parse_atom_types(lines: list[str]) -> list[dict[str, Any]]:
     return rows
 
 
-def _parse_quadratic_bond(lines: list[str]) -> list[dict[str, Any]]:
+def _parse_quadratic_bond(lines: list[str], *, source_default: str | None) -> list[dict[str, Any]]:
+    """Parse `#quadratic_bond` section rows.
+
+    Accepts both:
+    - Minimal rows: `t1 t2 k r0 [source...]`
+    - Asset-style rows with leading columns (eg `ver ref t1 t2 r0 k2`)
+
+    Robustness:
+    - We locate the last *adjacent* pair of float-like tokens.
+    - The two tokens immediately before that pair are interpreted as `(t1,t2)`.
+    - The float ordering is inferred via a simple heuristic:
+        - if first<=10 and second>10 => (r0,k)
+        - if first>10 and second<=10 => (k,r0)
+        - otherwise default to minimal ordering (k,r0) for backwards compatibility
+    - If a header suffix is present (eg `#quadratic_bond cvff_auto`), it becomes the
+      default row `source`.
+    - If no header suffix exists, any trailing tokens after the numeric pair become `source`.
+    """
     rows: list[dict[str, Any]] = []
+
     for raw in lines:
         if _is_ignorable_line(raw):
             continue
         line = _strip_inline_comment(raw)
         if not line.strip():
             continue
+
         toks = line.split()
         if len(toks) < 4:
-            raise ValueError(f"#quadratic_bond: expected at least 4 columns (t1 t2 k r0), got: {raw!r}")
+            raise ValueError(
+                f"#quadratic_bond: expected at least 4 columns (t1 t2 k r0) "
+                f"or asset-style (ver ref t1 t2 r0 k2), got: {raw!r}"
+            )
 
-        t1, t2 = toks[0], toks[1]
-        k = float(toks[2])
-        r0 = float(toks[3])
-        source = " ".join(toks[4:]) if len(toks) > 4 else None
+        # Find the last two *adjacent* float-like tokens.
+        a_i: int | None = None
+        b_i: int | None = None
+        for i in range(len(toks) - 2, -1, -1):
+            try:
+                float(toks[i])
+                float(toks[i + 1])
+            except Exception:
+                continue
+            a_i = i
+            b_i = i + 1
+            break
+
+        if a_i is None or b_i is None:
+            raise ValueError(f"#quadratic_bond: could not find trailing numeric pair in row: {raw!r}")
+
+        if a_i < 2:
+            raise ValueError(f"#quadratic_bond: not enough tokens before numeric pair to extract (t1,t2): {raw!r}")
+
+        t1, t2 = toks[a_i - 2], toks[a_i - 1]
+        a = float(toks[a_i])
+        b = float(toks[b_i])
+
+        # Heuristic to map (a,b) to (k,r0) vs (r0,k).
+        # Typical ranges: r0 ~ 0.9-3.5, k ~ O(100)+
+        if a <= 10.0 and b > 10.0:
+            r0, k = a, b
+        elif a > 10.0 and b <= 10.0:
+            k, r0 = a, b
+        else:
+            # Ambiguous; keep minimal ordering for compatibility with existing tests.
+            k, r0 = a, b
+
+        source = source_default
+        if source is None:
+            tail = " ".join(toks[b_i + 1 :]).strip()
+            source = tail if tail else None
 
         rows.append(
             {
@@ -344,6 +447,7 @@ def _parse_quadratic_bond(lines: list[str]) -> list[dict[str, Any]]:
                 "source": source,
             }
         )
+
     return rows
 
 
@@ -430,7 +534,9 @@ def _parse_nonbond_12_6(lines: list[str]) -> dict[str, tuple[float, float]]:
     - `@type A-B`
     - `@combination geometric`
 
-    Parameter lines expected: `atom_type lj_a lj_b`
+    Accepts both:
+    - Minimal rows: `atom_type lj_a lj_b`
+    - Asset-style rows with leading columns (eg `ver ref atom_type lj_a lj_b`)
     """
     saw_type = False
     saw_comb = False
@@ -455,11 +561,29 @@ def _parse_nonbond_12_6(lines: list[str]) -> dict[str, tuple[float, float]]:
 
         toks = s.split()
         if len(toks) < 3:
-            raise ValueError(f"#nonbond(12-6): expected 3 columns (atom_type lj_a lj_b), got: {raw!r}")
+            raise ValueError(f"#nonbond(12-6): expected at least 3 columns (atom_type lj_a lj_b), got: {raw!r}")
 
-        at = toks[0]
-        a = float(toks[1])
-        b = float(toks[2])
+        # Locate the last two *adjacent* float-like tokens; interpret them as (a,b).
+        a_i: int | None = None
+        b_i: int | None = None
+        for i in range(len(toks) - 2, -1, -1):
+            try:
+                float(toks[i])
+                float(toks[i + 1])
+            except Exception:
+                continue
+            a_i = i
+            b_i = i + 1
+            break
+
+        if a_i is None or b_i is None:
+            raise ValueError(f"#nonbond(12-6): could not find trailing numeric (A,B) pair in row: {raw!r}")
+        if a_i < 1:
+            raise ValueError(f"#nonbond(12-6): not enough tokens before (A,B) to extract atom_type: {raw!r}")
+
+        at = toks[a_i - 1]
+        a = float(toks[a_i])
+        b = float(toks[b_i])
         out[at] = (a, b)
 
     if not saw_type:
@@ -484,16 +608,20 @@ def _build_tables(
 
     atom_df = pd.DataFrame(atom_types_rows)
 
-    # Apply nonbond params to atom_df
-    # Every atom type must end up with lj_a/lj_b populated due to strict validator.
+    # Apply nonbond params to atom_df.
+    #
+    # CVFF/MSI assets do not necessarily provide A/B params for every declared atom type.
+    # Keep tolerant: fill when present, otherwise leave as None.
     lj_a_vals: list[Any] = []
     lj_b_vals: list[Any] = []
     for at in atom_df["atom_type"].tolist():
-        if at not in nonbond_params:
-            raise ValueError(f"parse_frc_text: missing nonbond(12-6) A/B parameters for atom_type {at!r}")
-        a, b = nonbond_params[at]
-        lj_a_vals.append(a)
-        lj_b_vals.append(b)
+        if at in nonbond_params:
+            a, b = nonbond_params[at]
+            lj_a_vals.append(a)
+            lj_b_vals.append(b)
+        else:
+            lj_a_vals.append(None)
+            lj_b_vals.append(None)
 
     atom_df["vdw_style"] = "lj_ab_12_6"
     atom_df["lj_a"] = lj_a_vals
