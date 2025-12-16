@@ -21,6 +21,9 @@ def _fixture_frc_text() -> str:
             "#quadratic_bond",
             "  o  c3  100.0  1.23  src:demo",
             "  c3 h   250.0  1.09",
+            "#quadratic_angle demo_src",
+            "  o   c3  h   109.5  45.0",
+            "  h   c3  h   106.4  39.5",
             "#nonbond(12-6)",
             "  @type A-B",
             "  @combination geometric",
@@ -61,6 +64,7 @@ def test_at1_import_export_full_roundtrip_via_bundle(tmp_path: Path) -> None:
 
     pd.testing.assert_frame_equal(tables2["atom_types"], tables1["atom_types"], check_like=False)
     pd.testing.assert_frame_equal(tables2["bonds"], tables1["bonds"], check_like=False)
+    pd.testing.assert_frame_equal(tables2["angles"], tables1["angles"], check_like=False)
 
     assert unknown2.get("#unsupported_section") == unknown1.get("#unsupported_section")
     assert unknown2.get("#preamble") == unknown1.get("#preamble")

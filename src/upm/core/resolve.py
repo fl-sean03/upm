@@ -12,8 +12,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from upm.core.model import BondKey, Requirements, ResolvedFF, canonicalize_bond_key
-from upm.core.tables import normalize_atom_types, normalize_bonds
+from upm.core.model import AngleKey, BondKey, Requirements, ResolvedFF, canonicalize_angle_key, canonicalize_bond_key
+from upm.core.tables import normalize_angles, normalize_atom_types, normalize_bonds
 
 
 @dataclass(frozen=True)
@@ -25,27 +25,33 @@ class MissingTermsError(ValueError):
 
     missing_atom_types: tuple[str, ...] = ()
     missing_bond_types: tuple[BondKey, ...] = ()
+    missing_angle_types: tuple[AngleKey, ...] = ()
 
     def __init__(
         self,
         *,
         missing_atom_types: list[str] | tuple[str, ...] = (),
         missing_bond_types: list[BondKey] | tuple[BondKey, ...] = (),
+        missing_angle_types: list[AngleKey] | tuple[AngleKey, ...] = (),
     ) -> None:
         atom = tuple(sorted(set(missing_atom_types)))
         bonds = tuple(sorted(set(missing_bond_types)))
+        angles = tuple(sorted(set(missing_angle_types)))
 
         parts: list[str] = []
         if atom:
             parts.append(f"missing required atom_types: {list(atom)!r}")
         if bonds:
             parts.append(f"missing required bond_types: {list(bonds)!r}")
+        if angles:
+            parts.append(f"missing required angle_types: {list(angles)!r}")
 
         msg = "; ".join(parts) if parts else "missing required terms"
         super().__init__(msg)
 
         object.__setattr__(self, "missing_atom_types", atom)
         object.__setattr__(self, "missing_bond_types", bonds)
+        object.__setattr__(self, "missing_angle_types", angles)
 
 
 def resolve_minimal(tables: Mapping[str, Any], requirements: Requirements) -> ResolvedFF:
@@ -140,16 +146,68 @@ def resolve_minimal(tables: Mapping[str, Any], requirements: Requirements) -> Re
             bonds_subset = normalize_bonds(bonds_subset)
 
     # ------------------------
+    # angles (required iff req has any)
+    # ------------------------
+    angles_subset = None
+    missing_angle_types: list[AngleKey] = []
+
+    req_angle_set = set(requirements.angle_types)
+    if req_angle_set:
+        angles_df = tables.get("angles")
+        if angles_df is None:
+            missing_angle_types = sorted(req_angle_set)
+        else:
+            if not isinstance(angles_df, pd.DataFrame):
+                raise TypeError(f"resolve_minimal: tables['angles'] must be a DataFrame, got {type(angles_df).__name__}")
+
+            t1 = angles_df["t1"].astype("string").str.strip()
+            t2 = angles_df["t2"].astype("string").str.strip()
+            t3 = angles_df["t3"].astype("string").str.strip()
+
+            angle_keys: list[AngleKey] = []
+            for a, b, c in zip(t1.tolist(), t2.tolist(), t3.tolist()):
+                if a is pd.NA or b is pd.NA or c is pd.NA:
+                    continue
+                angle_keys.append(canonicalize_angle_key(str(a), str(b), str(c)))
+
+            present_angle_set = set(angle_keys)
+            missing_angle_types = sorted(req_angle_set - present_angle_set)
+
+            keep_mask = [k in req_angle_set for k in angle_keys]
+            angles_subset = angles_df.loc[keep_mask].copy(deep=True)
+
+            # Ensure canonicalized endpoints in the subset (defensive)
+            sub_t1: list[str] = []
+            sub_t2: list[str] = []
+            sub_t3: list[str] = []
+            for a, b, c in zip(
+                angles_subset["t1"].astype("string").str.strip().tolist(),
+                angles_subset["t2"].astype("string").str.strip().tolist(),
+                angles_subset["t3"].astype("string").str.strip().tolist(),
+            ):
+                k1, k2, k3 = canonicalize_angle_key(str(a), str(b), str(c))
+                sub_t1.append(k1)
+                sub_t2.append(k2)
+                sub_t3.append(k3)
+            angles_subset["t1"] = pd.Series(sub_t1, dtype="string")
+            angles_subset["t2"] = pd.Series(sub_t2, dtype="string")
+            angles_subset["t3"] = pd.Series(sub_t3, dtype="string")
+
+            angles_subset = normalize_angles(angles_subset)
+
+    # ------------------------
     # Missing-term handling (hard-error)
     # ------------------------
-    if missing_atom_types or missing_bond_types:
+    if missing_atom_types or missing_bond_types or missing_angle_types:
         raise MissingTermsError(
             missing_atom_types=missing_atom_types,
             missing_bond_types=missing_bond_types,
+            missing_angle_types=missing_angle_types,
         )
 
     return ResolvedFF(
         requirements=requirements,
         atom_types=atom_subset,
         bonds=bonds_subset,
+        angles=angles_subset,
     )

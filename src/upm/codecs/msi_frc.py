@@ -1,8 +1,9 @@
-"""MSI `.frc` codec (import + export) for UPM v0.1.
+"""MSI `.frc` codec (import + export) for UPM v0.1.1.
 
-Supported parse/export subset (v0.1 minimal):
+Supported parse/export subset (v0.1.1):
 - `#atom_types`
 - `#quadratic_bond`
+- `#quadratic_angle`
 - `#nonbond(12-6)` with:
   - `@type A-B`
   - `@combination geometric`
@@ -49,18 +50,26 @@ def parse_frc_text(text: str) -> tuple[dict[str, "Any"], dict[str, list[str]]]:
 
     atom_types_rows: list[dict[str, Any]] = []
     bonds_rows: list[dict[str, Any]] = []
+    angles_rows: list[dict[str, Any]] = []
 
     # nonbond map: atom_type -> (lj_a, lj_b)
     nonbond_params: dict[str, tuple[float, float]] = {}
 
     for header_raw, body_lines in sections:
-        header_norm = header_raw.strip().lower()
+        # Section header may contain extra tokens (eg "#quadratic_angle cvff_auto").
+        header_tokens = header_raw.strip().split()
+        header_key = header_tokens[0].lower() if header_tokens else ""
+        header_suffix = " ".join(header_tokens[1:]).strip() if len(header_tokens) > 1 else None
+        if header_suffix == "":
+            header_suffix = None
 
-        if header_norm == "#atom_types":
+        if header_key == "#atom_types":
             atom_types_rows.extend(_parse_atom_types(body_lines))
-        elif header_norm == "#quadratic_bond":
+        elif header_key == "#quadratic_bond":
             bonds_rows.extend(_parse_quadratic_bond(body_lines))
-        elif header_norm == "#nonbond(12-6)":
+        elif header_key == "#quadratic_angle":
+            angles_rows.extend(_parse_quadratic_angle(body_lines, source_default=header_suffix))
+        elif header_key == "#nonbond(12-6)":
             nb = _parse_nonbond_12_6(body_lines)
             # merge; last one wins deterministically by file order
             nonbond_params.update(nb)
@@ -68,7 +77,7 @@ def parse_frc_text(text: str) -> tuple[dict[str, "Any"], dict[str, list[str]]]:
             # Unknown/unsupported section: preserve body-only lines as agreed.
             unknown_sections[header_raw] = list(body_lines)
 
-    tables = _build_tables(atom_types_rows, bonds_rows, nonbond_params)
+    tables = _build_tables(atom_types_rows, bonds_rows, angles_rows, nonbond_params)
 
     # Normalize + validate for deterministic downstream behavior.
     tables_norm = normalize_tables(tables)
@@ -107,7 +116,7 @@ def write_frc(
     norm_tables = normalize_tables(tables)
 
     lines: list[str] = []
-    lines.append("# MSI FRC exported by UPM v0.1")
+    lines.append("# MSI FRC exported by UPM v0.1.1")
 
     # ---- supported sections (fixed order) ----
     if "atom_types" in norm_tables and norm_tables["atom_types"] is not None:
@@ -117,6 +126,10 @@ def write_frc(
     if "bonds" in norm_tables and norm_tables["bonds"] is not None:
         df = _require_df(norm_tables["bonds"], table="bonds")
         lines.extend(_format_quadratic_bond_section(df))
+
+    if "angles" in norm_tables and norm_tables["angles"] is not None:
+        df = _require_df(norm_tables["angles"], table="angles")
+        lines.extend(_format_quadratic_angle_section(df))
 
     # For v0.1 export, we emit nonbond parameters from atom_types (lj_a/lj_b).
     if "atom_types" in norm_tables and norm_tables["atom_types"] is not None:
@@ -269,6 +282,78 @@ def _parse_quadratic_bond(lines: list[str]) -> list[dict[str, Any]]:
     return rows
 
 
+def _parse_quadratic_angle(lines: list[str], *, source_default: str | None) -> list[dict[str, Any]]:
+    """Parse `#quadratic_angle` section rows.
+
+    Accepts both:
+    - Minimal rows: `t1 t2 t3 theta0_deg k`
+    - Asset-style rows with leading columns (eg `ver ref t1 t2 t3 theta0 k`)
+
+    Robustness:
+    - We locate the last *adjacent* pair of float-like tokens as `(theta0_deg, k)`.
+    - The three tokens immediately before `theta0_deg` are interpreted as `(t1,t2,t3)`.
+    - If a header suffix is present (eg `#quadratic_angle cvff_auto`), it becomes the
+      default row `source`.
+    - If no header suffix exists, any trailing tokens after `k` become `source`.
+    """
+    rows: list[dict[str, Any]] = []
+    for raw in lines:
+        if _is_ignorable_line(raw):
+            continue
+        line = _strip_inline_comment(raw)
+        if not line.strip():
+            continue
+
+        toks = line.split()
+        if len(toks) < 5:
+            raise ValueError(f"#quadratic_angle: expected at least 5 columns (t1 t2 t3 theta0 k), got: {raw!r}")
+
+        # Find the last two *adjacent* float-like tokens: theta0_deg then k.
+        theta0_i: int | None = None
+        k_i: int | None = None
+        for i in range(len(toks) - 2, -1, -1):
+            try:
+                float(toks[i])
+                float(toks[i + 1])
+            except Exception:
+                continue
+            theta0_i = i
+            k_i = i + 1
+            break
+
+        if theta0_i is None or k_i is None:
+            raise ValueError(f"#quadratic_angle: could not find trailing numeric theta0/k in row: {raw!r}")
+
+        if theta0_i < 3:
+            raise ValueError(f"#quadratic_angle: not enough tokens before theta0 to extract (t1,t2,t3): {raw!r}")
+
+        t1, t2, t3 = toks[theta0_i - 3], toks[theta0_i - 2], toks[theta0_i - 1]
+        theta0 = float(toks[theta0_i])
+        k = float(toks[k_i])
+
+        # Source policy:
+        # - prefer section-level suffix
+        # - else allow per-row trailing text after k
+        source = source_default
+        if source is None:
+            tail = " ".join(toks[k_i + 1 :]).strip()
+            source = tail if tail else None
+
+        rows.append(
+            {
+                "t1": t1,
+                "t2": t2,
+                "t3": t3,
+                "style": "quadratic",
+                "k": k,
+                "theta0_deg": theta0,
+                "source": source,
+            }
+        )
+
+    return rows
+
+
 _TYPE_AB_RE = re.compile(r"@type\s+a-b\b", flags=re.IGNORECASE)
 _COMB_GEOM_RE = re.compile(r"@combination\s+geometric\b", flags=re.IGNORECASE)
 
@@ -323,6 +408,7 @@ def _parse_nonbond_12_6(lines: list[str]) -> dict[str, tuple[float, float]]:
 def _build_tables(
     atom_types_rows: list[dict[str, Any]],
     bonds_rows: list[dict[str, Any]],
+    angles_rows: list[dict[str, Any]],
     nonbond_params: dict[str, tuple[float, float]],
 ) -> dict[str, "Any"]:
     import pandas as pd
@@ -358,6 +444,11 @@ def _build_tables(
         # Ensure schema columns exist
         bonds_df = bonds_df.loc[:, TABLE_COLUMN_ORDER["bonds"]]
         tables["bonds"] = bonds_df
+
+    if angles_rows:
+        angles_df = pd.DataFrame(angles_rows)
+        angles_df = angles_df.loc[:, TABLE_COLUMN_ORDER["angles"]]
+        tables["angles"] = angles_df
 
     return tables
 
@@ -414,6 +505,39 @@ def _format_quadratic_bond_section(df: Any) -> list[str]:
         if source is not None and str(source) != "<NA>":
             parts.append(str(source))
         lines.append("  " + " ".join(parts))
+    return lines
+
+
+def _format_quadratic_angle_section(df: Any) -> list[str]:
+    # Determine a uniform source suffix (if any) to attach to the header.
+    src_series = df["source"].astype("string").str.strip()
+    present = [str(x) for x in src_series.dropna().tolist() if str(x) != "<NA>"]
+    unique = sorted(set(present))
+    header = "#quadratic_angle"
+    header_suffix = unique[0] if len(unique) == 1 and unique[0] else None
+    if header_suffix is not None:
+        header = f"{header} {header_suffix}"
+
+    lines: list[str] = [header]
+
+    # Emit minimal 5-column rows deterministically. If header suffix is not used,
+    # preserve per-row `source` as trailing tokens when present.
+    use_header_source = header_suffix is not None
+    for _, row in df.iterrows():
+        t1 = str(row["t1"])
+        t2 = str(row["t2"])
+        t3 = str(row["t3"])
+        theta0 = _fmt_float(row["theta0_deg"])
+        k = _fmt_float(row["k"])
+        parts = [t1, t2, t3, theta0, k]
+
+        if not use_header_source:
+            source = row["source"]
+            if source is not None and str(source) != "<NA>":
+                parts.append(str(source))
+
+        lines.append("  " + " ".join(parts))
+
     return lines
 
 

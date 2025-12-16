@@ -219,6 +219,48 @@ def validate_bonds(df: "pd.DataFrame") -> None:
         raise TableValidationError(violations)
 
 
+def validate_angles(df: "pd.DataFrame") -> None:
+    """Validate `angles` schema + v0.1.1 invariants.
+
+    Canonical invariants:
+    - endpoints must satisfy t1 <= t3 (canonicalize before validate)
+
+    Style support (v0.1.1):
+    - only quadratic angles are supported (from `#quadratic_angle`)
+    """
+    df = _require_dataframe(df, table="angles")
+
+    violations: list[Violation] = []
+    _check_required_columns(df, table="angles", violations=violations)
+    _check_no_extra_columns(df, table="angles", violations=violations)
+
+    if violations:
+        raise TableValidationError(violations)
+
+    _check_non_empty_strings(df, table="angles", col="t1", violations=violations)
+    _check_non_empty_strings(df, table="angles", col="t2", violations=violations)
+    _check_non_empty_strings(df, table="angles", col="t3", violations=violations)
+    _check_non_empty_strings(df, table="angles", col="style", violations=violations)
+
+    # invariant: t1 <= t3
+    t1 = df["t1"].astype("string").str.strip()
+    t3 = df["t3"].astype("string").str.strip()
+    bad_order = t1 > t3
+    if bad_order.any():
+        violations.append(Violation("angles", "angle keys must satisfy t1 <= t3 (canonicalize before validate)"))
+
+    bad_style = df["style"].astype("string").str.strip() != "quadratic"
+    if bad_style.any():
+        violations.append(Violation("angles", "style: only 'quadratic' supported in v0.1.1"))
+
+    _check_numeric_non_null_finite(df, table="angles", col="k", violations=violations)
+    _check_numeric_non_null_finite(df, table="angles", col="theta0_deg", violations=violations)
+    _check_unique_key(df, table="angles", cols=["t1", "t2", "t3", "style"], violations=violations)
+
+    if violations:
+        raise TableValidationError(violations)
+
+
 def validate_tables(tables: dict[str, "pd.DataFrame"]) -> None:
     """Validate a tables dict for v0.1.
 
@@ -227,6 +269,7 @@ def validate_tables(tables: dict[str, "pd.DataFrame"]) -> None:
 
     Optional (validated if present):
     - `bonds`
+    - `angles`
     - `pair_overrides` (schema defined, but semantic validation not yet enforced in v0.1 minimal)
     """
     if not isinstance(tables, dict):
@@ -247,6 +290,12 @@ def validate_tables(tables: dict[str, "pd.DataFrame"]) -> None:
     if "bonds" in tables and tables["bonds"] is not None:
         try:
             validate_bonds(tables["bonds"])
+        except TableValidationError as e:
+            violations.extend(e.violations)
+
+    if "angles" in tables and tables["angles"] is not None:
+        try:
+            validate_angles(tables["angles"])
         except TableValidationError as e:
             violations.extend(e.violations)
 

@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from upm.core.model import canonicalize_bond_key
+from upm.core.model import canonicalize_angle_key, canonicalize_bond_key
 
 if TYPE_CHECKING:  # pragma: no cover
     import pandas as pd
@@ -51,6 +51,15 @@ TABLE_SCHEMAS: dict[str, dict[str, str]] = {
         "r0": "Float64",
         "source": "string",
     },
+    "angles": {
+        "t1": "string",
+        "t2": "string",
+        "t3": "string",
+        "style": "string",
+        "k": "Float64",
+        "theta0_deg": "Float64",
+        "source": "string",
+    },
     "pair_overrides": {
         "t1": "string",
         "t2": "string",
@@ -63,6 +72,7 @@ TABLE_SCHEMAS: dict[str, dict[str, str]] = {
 TABLE_KEYS: dict[str, list[str]] = {
     "atom_types": ["atom_type"],
     "bonds": ["t1", "t2", "style"],
+    "angles": ["t1", "t2", "t3", "style"],
     "pair_overrides": ["t1", "t2"],
 }
 
@@ -225,6 +235,69 @@ def normalize_bonds(df: "pd.DataFrame") -> "pd.DataFrame":
     return out
 
 
+def normalize_angles(df: "pd.DataFrame") -> "pd.DataFrame":
+    """Return a canonicalized `angles` table.
+
+    Canonicalization rules (v0.1.1):
+    - angle endpoints are canonicalized so that `t1 <= t3` lexicographically
+      (using `upm.core.model.canonicalize_angle_key`)
+
+    Post-conditions:
+    - required columns are present and no extra columns exist (strict)
+    - string columns are pandas string dtype and stripped
+    - `(t1,t2,t3)` is canonicalized for every row
+    - numeric columns are cast to Float64 extension dtype
+    - rows are sorted deterministically by (`t1`,`t2`,`t3`,`style`)
+    - index is reset to RangeIndex
+
+    Note: semantic validation (eg style allowed, non-null numeric values, uniqueness)
+    is handled by `upm.core.validate.validate_angles`.
+    """
+    import pandas as pd
+
+    if not isinstance(df, pd.DataFrame):
+        raise TypeError(f"angles: expected pandas.DataFrame, got {type(df).__name__}")
+
+    table = "angles"
+    schema = TABLE_SCHEMAS[table]
+    required_cols = list(schema.keys())
+
+    _require_columns(df, required=required_cols, table=table)
+    _reject_extra_columns(df, allowed=required_cols, table=table)
+
+    out = df.copy(deep=True)
+
+    # Normalize dtypes/strings first so canonicalization sees stripped strings.
+    out = _cast_to_schema(out, schema=schema)
+
+    t1_vals = out["t1"].tolist()
+    t2_vals = out["t2"].tolist()
+    t3_vals = out["t3"].tolist()
+
+    new_t1: list[str | Any] = []
+    new_t2: list[str | Any] = []
+    new_t3: list[str | Any] = []
+
+    for a, b, c in zip(t1_vals, t2_vals, t3_vals):
+        if a is pd.NA or b is pd.NA or c is pd.NA:
+            new_t1.append(a)
+            new_t2.append(b)
+            new_t3.append(c)
+            continue
+        k1, k2, k3 = canonicalize_angle_key(str(a), str(b), str(c))
+        new_t1.append(k1)
+        new_t2.append(k2)
+        new_t3.append(k3)
+
+    out["t1"] = pd.Series(new_t1, dtype="string")
+    out["t2"] = pd.Series(new_t2, dtype="string")
+    out["t3"] = pd.Series(new_t3, dtype="string")
+
+    out = _reorder_columns(out, column_order=TABLE_COLUMN_ORDER[table])
+    out = _sort_canonical(out, keys=TABLE_KEYS[table])
+    return out
+
+
 def normalize_tables(tables: dict[str, "pd.DataFrame"]) -> dict[str, "pd.DataFrame"]:
     """Normalize any recognized tables in `tables` and return a new dict.
 
@@ -241,6 +314,8 @@ def normalize_tables(tables: dict[str, "pd.DataFrame"]) -> dict[str, "pd.DataFra
             out[name] = normalize_atom_types(df)
         elif name == "bonds":
             out[name] = normalize_bonds(df)
+        elif name == "angles":
+            out[name] = normalize_angles(df)
         else:
             out[name] = df
     return out

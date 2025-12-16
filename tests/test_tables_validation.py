@@ -3,8 +3,8 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from upm.core.tables import normalize_atom_types, normalize_bonds
-from upm.core.validate import TableValidationError, validate_atom_types
+from upm.core.tables import normalize_angles, normalize_atom_types, normalize_bonds
+from upm.core.validate import TableValidationError, validate_angles, validate_atom_types
 
 
 def test_normalize_bonds_canonicalizes_swapped_endpoints_and_sorts():
@@ -24,6 +24,35 @@ def test_normalize_bonds_canonicalizes_swapped_endpoints_and_sorts():
 
     # deterministic sorting by (t1, t2, style) means (c3,h,...) row comes before (c3,o,...)
     assert list(out["t2"]) == ["h", "o"]
+
+
+def test_normalize_angles_canonicalizes_swapped_endpoints_and_sorts():
+    df = pd.DataFrame(
+        [
+            # swapped endpoints (t1 > t3) should be canonicalized
+            {"t1": "o", "t2": "c3", "t3": "h", "style": "quadratic", "k": 1.0, "theta0_deg": 109.5, "source": None},
+            # already canonical, but comes "earlier" after sorting (h,c3,h) < (h,c3,o)
+            {"t1": "h", "t2": "c3", "t3": "h", "style": "quadratic", "k": 2.0, "theta0_deg": 106.4, "source": None},
+        ]
+    )
+
+    out = normalize_angles(df)
+
+    assert list(out["t1"]) == ["h", "h"]
+    assert list(out["t2"]) == ["c3", "c3"]
+    assert list(out["t3"]) == ["h", "o"]
+
+
+def test_validate_angles_rejects_non_quadratic_style():
+    df = pd.DataFrame(
+        [
+            {"t1": "h", "t2": "c3", "t3": "h", "style": "not_quadratic", "k": 2.0, "theta0_deg": 106.4, "source": None},
+        ]
+    )
+    norm = normalize_angles(df)
+
+    with pytest.raises(TableValidationError, match=r"angles: style: only 'quadratic' supported in v0\.1\.1"):
+        validate_angles(norm)
 
 
 def test_validate_atom_types_rejects_missing_required_columns():

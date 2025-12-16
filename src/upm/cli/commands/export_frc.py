@@ -92,6 +92,8 @@ def register(app: typer.Typer) -> None:
         tables_subset: dict[str, object] = {"atom_types": resolved.atom_types}
         if resolved.bonds is not None:
             tables_subset["bonds"] = resolved.bonds
+        if resolved.angles is not None:
+            tables_subset["angles"] = resolved.angles
 
         write_frc(out_path, tables=tables_subset, unknown_sections=unknown_sections, mode="minimal")
         typer.echo(str(out_path))

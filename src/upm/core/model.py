@@ -179,6 +179,7 @@ class ResolvedFF:
     requirements: Requirements
     atom_types: "pd.DataFrame"
     bonds: "pd.DataFrame | None" = None
+    angles: "pd.DataFrame | None" = None
     pair_overrides: "pd.DataFrame | None" = None
 
     source: PackageRef | None = None

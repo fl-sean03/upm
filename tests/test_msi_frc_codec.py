@@ -9,7 +9,7 @@ from upm.codecs.msi_frc import parse_frc_text, read_frc, write_frc
 
 def _fixture_frc_text() -> str:
     # Includes:
-    # - supported sections: atom_types, quadratic_bond, nonbond(12-6) with directives
+    # - supported sections: atom_types, quadratic_bond, quadratic_angle, nonbond(12-6) with directives
     # - unsupported section preserved verbatim (body-only)
     return "\n".join(
         [
@@ -22,6 +22,10 @@ def _fixture_frc_text() -> str:
             "#quadratic_bond",
             "  o  c3  100.0  1.23  src:demo",
             "  c3 h   250.0  1.09",
+            "#quadratic_angle demo_src",
+            # order intentionally non-canonical in first row (o > h) to test endpoint canonicalization
+            "  o   c3  h   109.5  45.0",
+            "  h   c3  h   106.4  39.5",
             "#nonbond(12-6)",
             "  @type A-B",
             "  @combination geometric",
@@ -41,6 +45,7 @@ def test_parse_frc_text_supported_and_unknown_sections_shape() -> None:
 
     assert "atom_types" in tables
     assert "bonds" in tables
+    assert "angles" in tables
 
     # Unknown preservation:
     # - key = exact header line
@@ -58,6 +63,12 @@ def test_parse_frc_text_supported_and_unknown_sections_shape() -> None:
     assert list(tables["bonds"]["t1"]) == ["c3", "c3"]
     assert list(tables["bonds"]["t2"]) == ["h", "o"]
 
+    # Angles are canonicalized (t1 <= t3) and sorted deterministically.
+    assert list(tables["angles"]["t1"]) == ["h", "h"]
+    assert list(tables["angles"]["t2"]) == ["c3", "c3"]
+    assert list(tables["angles"]["t3"]) == ["h", "o"]
+    assert list(tables["angles"]["source"]) == ["demo_src", "demo_src"]
+
 
 def test_export_full_then_reimport_roundtrip_tables_and_unknown(tmp_path: Path) -> None:
     tables1, unknown1 = parse_frc_text(_fixture_frc_text())
@@ -70,6 +81,7 @@ def test_export_full_then_reimport_roundtrip_tables_and_unknown(tmp_path: Path) 
     # Tables should match exactly after normalization.
     pd.testing.assert_frame_equal(tables2["atom_types"], tables1["atom_types"], check_like=False)
     pd.testing.assert_frame_equal(tables2["bonds"], tables1["bonds"], check_like=False)
+    pd.testing.assert_frame_equal(tables2["angles"], tables1["angles"], check_like=False)
 
     # Unknown sections should roundtrip.
     assert unknown2["#unsupported_section"] == unknown1["#unsupported_section"]

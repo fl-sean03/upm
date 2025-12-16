@@ -21,6 +21,10 @@ def _fixture_frc_text() -> str:
             "#quadratic_bond",
             "  o  c3  100.0  1.23",
             "  c3 h   250.0  1.09",
+            "#quadratic_angle demo_src",
+            # include extra so minimal resolver can subset
+            "  o   c3  h   109.5  45.0",
+            "  h   c3  h   106.4  39.5",
             "#nonbond(12-6)",
             "  @type A-B",
             "  @combination geometric",
@@ -36,7 +40,11 @@ def _fixture_frc_text() -> str:
 def test_at2_resolve_minimal_subset_and_export_reimport(tmp_path: Path) -> None:
     tables_full, unknown = parse_frc_text(_fixture_frc_text())
 
-    req = Requirements(atom_types=["c3", "h"], bond_types=[["h", "c3"]])
+    req = Requirements(
+        atom_types=["c3", "h"],
+        bond_types=[["h", "c3"]],
+        angle_types=[["h", "c3", "h"]],
+    )
 
     resolved = resolve_minimal(tables_full, req)
 
@@ -47,14 +55,28 @@ def test_at2_resolve_minimal_subset_and_export_reimport(tmp_path: Path) -> None:
     assert list(resolved.bonds["t1"]) == ["c3"]
     assert list(resolved.bonds["t2"]) == ["h"]
 
+    # Subset correctness (angles): only h-c3-h
+    assert resolved.angles is not None
+    assert list(resolved.angles["t1"]) == ["h"]
+    assert list(resolved.angles["t2"]) == ["c3"]
+    assert list(resolved.angles["t3"]) == ["h"]
+
     # Export minimal and re-import: must contain only required supported rows
     out_path = tmp_path / "min.frc"
-    write_frc(out_path, tables={"atom_types": resolved.atom_types, "bonds": resolved.bonds}, unknown_sections=unknown, mode="minimal")
+    write_frc(
+        out_path,
+        tables={"atom_types": resolved.atom_types, "bonds": resolved.bonds, "angles": resolved.angles},
+        unknown_sections=unknown,
+        mode="minimal",
+    )
 
     tables_min, unknown_min = read_frc(out_path)
     assert list(tables_min["atom_types"]["atom_type"]) == ["c3", "h"]
     assert list(tables_min["bonds"]["t1"]) == ["c3"]
     assert list(tables_min["bonds"]["t2"]) == ["h"]
+    assert list(tables_min["angles"]["t1"]) == ["h"]
+    assert list(tables_min["angles"]["t2"]) == ["c3"]
+    assert list(tables_min["angles"]["t3"]) == ["h"]
 
     # Unknown section preservation
     assert unknown_min.get("#unsupported_section") == unknown.get("#unsupported_section")
@@ -85,6 +107,7 @@ def test_at3_missing_bond_types_error_lists_missing() -> None:
     # Both missing bonds should be listed; ('c3','o') exists, ('c3','x_missing') does not.
     assert "('c3', 'x_missing')" in msg
     assert e.value.missing_bond_types == (("c3", "x_missing"),)
+    assert e.value.missing_angle_types == ()
 
 
 def test_resolve_minimal_missing_bonds_when_table_absent_lists_all_required() -> None:
@@ -99,6 +122,7 @@ def test_resolve_minimal_missing_bonds_when_table_absent_lists_all_required() ->
         _ = resolve_minimal(tables_no_bonds, req)
 
     assert e.value.missing_bond_types == (("c3", "h"),)
+    assert e.value.missing_angle_types == ()
 
 
 def test_minimal_export_from_bundle_matches_requirements_exactly(tmp_path: Path) -> None:
@@ -111,13 +135,17 @@ def test_minimal_export_from_bundle_matches_requirements_exactly(tmp_path: Path)
 
     bundle = load_package(pkg_root)
 
-    req = Requirements(atom_types=["c3", "h"], bond_types=[["c3", "h"]])
+    req = Requirements(
+        atom_types=["c3", "h"],
+        bond_types=[["c3", "h"]],
+        angle_types=[["h", "c3", "h"]],
+    )
     resolved = resolve_minimal(bundle.tables, req)
 
     out_path = tmp_path / "minimal.frc"
     write_frc(
         out_path,
-        tables={"atom_types": resolved.atom_types, "bonds": resolved.bonds},
+        tables={"atom_types": resolved.atom_types, "bonds": resolved.bonds, "angles": resolved.angles},
         unknown_sections=bundle.raw["unknown_sections"],
         mode="minimal",
     )
@@ -126,3 +154,6 @@ def test_minimal_export_from_bundle_matches_requirements_exactly(tmp_path: Path)
     assert list(tables_min["atom_types"]["atom_type"]) == ["c3", "h"]
     assert list(tables_min["bonds"]["t1"]) == ["c3"]
     assert list(tables_min["bonds"]["t2"]) == ["h"]
+    assert list(tables_min["angles"]["t1"]) == ["h"]
+    assert list(tables_min["angles"]["t2"]) == ["c3"]
+    assert list(tables_min["angles"]["t3"]) == ["h"]
