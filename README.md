@@ -1,4 +1,3 @@
-```md
 # UPM — Unified Parameter Model
 
 UPM is a **standalone** Python library + CLI for managing, validating, and exporting **force-field parameter packages** (starting with Materials Studio / BIOSYM-style `*.frc` used by `msi2lmp`).
