@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from upm.io.requirements import read_requirements_json
+from upm.io.requirements import read_requirements_json, requirements_from_structure_json, write_requirements_json
 
 
 def _write_json(path: Path, obj: object) -> None:
@@ -107,3 +107,81 @@ def test_read_requirements_rejects_empty_strings(tmp_path: Path):
 
     with pytest.raises(ValueError, match=r"atom_types\[\*\]: must be a non-empty string"):
         read_requirements_json(p)
+
+
+def test_requirements_from_structure_json_deterministic_under_atom_and_bond_order(tmp_path: Path) -> None:
+    # 0=c3 -- 1=o -- 2=h
+    struct_a = {
+        "atoms": [
+            {"aid": 0, "atom_type": "c3"},
+            {"aid": 1, "atom_type": "o"},
+            {"aid": 2, "atom_type": "h"},
+        ],
+        "bonds": [{"a1": 0, "a2": 1}, {"a1": 1, "a2": 2}],
+    }
+
+    # Reordered atoms + reordered bonds + reversed endpoints (should be identical output).
+    struct_b = {
+        "atoms": [
+            {"aid": 2, "atom_type": "h"},
+            {"aid": 0, "atom_type": "c3"},
+            {"aid": 1, "atom_type": "o"},
+        ],
+        "bonds": [{"a1": 2, "a2": 1}, {"a1": 1, "a2": 0}],
+    }
+
+    p_a = tmp_path / "a.structure.json"
+    p_b = tmp_path / "b.structure.json"
+    _write_json(p_a, struct_a)
+    _write_json(p_b, struct_b)
+
+    req_a = requirements_from_structure_json(p_a)
+    req_b = requirements_from_structure_json(p_b)
+    assert req_a == req_b
+
+    # Canonical expectations (also checks canonicalization/sorting).
+    assert req_a.atom_types == ("c3", "h", "o")
+    assert req_a.bond_types == (("c3", "o"), ("h", "o"))
+    assert req_a.angle_types == (("c3", "o", "h"),)
+    assert req_a.dihedral_types == ()
+
+    out_a = tmp_path / "a.requirements.json"
+    out_b = tmp_path / "b.requirements.json"
+    write_requirements_json(req_a, out_a)
+    write_requirements_json(req_b, out_b)
+
+    txt_a = out_a.read_text(encoding="utf-8")
+    txt_b = out_b.read_text(encoding="utf-8")
+    assert txt_a == txt_b
+    assert txt_a.endswith("\n")
+
+
+def test_requirements_from_structure_json_missing_bonds_yields_empty_bond_and_angle_lists(tmp_path: Path) -> None:
+    p = tmp_path / "structure.json"
+    _write_json(
+        p,
+        {
+            "atoms": [{"aid": 0, "atom_type": "c3"}],
+            # bonds omitted
+        },
+    )
+
+    req = requirements_from_structure_json(p)
+    assert req.atom_types == ("c3",)
+    assert req.bond_types == ()
+    assert req.angle_types == ()
+    assert req.dihedral_types == ()
+
+
+def test_requirements_from_structure_json_invalid_bond_indices_hard_error(tmp_path: Path) -> None:
+    p = tmp_path / "structure.json"
+    _write_json(
+        p,
+        {
+            "atoms": [{"aid": 0, "atom_type": "a"}, {"aid": 1, "atom_type": "b"}],
+            "bonds": [{"a1": 0, "a2": 2}],  # out of range
+        },
+    )
+
+    with pytest.raises(ValueError, match=r"out of range"):
+        requirements_from_structure_json(p)
