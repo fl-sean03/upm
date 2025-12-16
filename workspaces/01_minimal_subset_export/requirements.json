@@ -1,0 +1,6 @@
+{
+  "atom_types": ["c3", "h"],
+  "bond_types": [["c3", "h"]],
+  "angle_types": [],
+  "dihedral_types": []
+}

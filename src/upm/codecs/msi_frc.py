@@ -1,0 +1,427 @@
+"""MSI `.frc` codec (import + export) for UPM v0.1.
+
+Supported parse/export subset (v0.1 minimal):
+- `#atom_types`
+- `#quadratic_bond`
+- `#nonbond(12-6)` with:
+  - `@type A-B`
+  - `@combination geometric`
+
+Everything else is preserved losslessly (as raw text lines) in an
+`unknown_sections` mapping:
+
+- key: exact section header line including leading `#` (no trailing newline)
+- value: list of body lines only (exclude the header), each stored exactly as in file
+  (no trailing newline)
+
+Export writes supported sections first (in a fixed order), then unknown sections
+in sorted header order for determinism.
+"""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+from typing import Any
+
+from upm.core.tables import TABLE_COLUMN_ORDER, normalize_tables
+from upm.core.validate import validate_tables
+
+# ----------------------------
+# Public API
+# ----------------------------
+
+
+def parse_frc_text(text: str) -> tuple[dict[str, "Any"], dict[str, list[str]]]:
+    """Parse MSI `.frc` text into canonical UPM tables + unknown section blobs.
+
+    Returns:
+        (tables, unknown_sections)
+
+    Notes:
+        - Returned tables are normalized (canonicalized dtypes + sorting).
+        - Returned tables are validated via `validate_tables()` (v0.1 strict).
+    """
+    if not isinstance(text, str):
+        raise TypeError(f"parse_frc_text: expected str, got {type(text).__name__}")
+
+    sections, unknown_sections = _split_sections(text)
+
+    atom_types_rows: list[dict[str, Any]] = []
+    bonds_rows: list[dict[str, Any]] = []
+
+    # nonbond map: atom_type -> (lj_a, lj_b)
+    nonbond_params: dict[str, tuple[float, float]] = {}
+
+    for header_raw, body_lines in sections:
+        header_norm = header_raw.strip().lower()
+
+        if header_norm == "#atom_types":
+            atom_types_rows.extend(_parse_atom_types(body_lines))
+        elif header_norm == "#quadratic_bond":
+            bonds_rows.extend(_parse_quadratic_bond(body_lines))
+        elif header_norm == "#nonbond(12-6)":
+            nb = _parse_nonbond_12_6(body_lines)
+            # merge; last one wins deterministically by file order
+            nonbond_params.update(nb)
+        else:
+            # Unknown/unsupported section: preserve body-only lines as agreed.
+            unknown_sections[header_raw] = list(body_lines)
+
+    tables = _build_tables(atom_types_rows, bonds_rows, nonbond_params)
+
+    # Normalize + validate for deterministic downstream behavior.
+    tables_norm = normalize_tables(tables)
+    validate_tables(tables_norm)
+    return tables_norm, unknown_sections
+
+
+def read_frc(path: str | Path) -> tuple[dict[str, "Any"], dict[str, list[str]]]:
+    """Read an MSI `.frc` file from disk and parse."""
+    p = Path(path)
+    text = p.read_text(encoding="utf-8")
+    return parse_frc_text(text)
+
+
+def write_frc(
+    path: str | Path,
+    *,
+    tables: dict[str, "Any"],
+    unknown_sections: dict[str, list[str]] | None = None,
+    mode: str = "full",
+) -> None:
+    """Write an MSI `.frc` file.
+
+    v0.1 behavior:
+    - `mode` is accepted for API stability, but `full` and `minimal` behave the same:
+      write whatever rows exist in the provided tables (resolver logic is out of scope).
+    """
+    if mode not in {"full", "minimal"}:
+        raise ValueError("write_frc: mode must be 'full' or 'minimal'")
+
+    if unknown_sections is None:
+        unknown_sections = {}
+
+    # Normalize for stable ordering/column layout, but validate only the tables we emit.
+    # (Callers may supply a subset table set for "minimal export".)
+    norm_tables = normalize_tables(tables)
+
+    lines: list[str] = []
+    lines.append("# MSI FRC exported by UPM v0.1")
+
+    # ---- supported sections (fixed order) ----
+    if "atom_types" in norm_tables and norm_tables["atom_types"] is not None:
+        df = _require_df(norm_tables["atom_types"], table="atom_types")
+        lines.extend(_format_atom_types_section(df))
+
+    if "bonds" in norm_tables and norm_tables["bonds"] is not None:
+        df = _require_df(norm_tables["bonds"], table="bonds")
+        lines.extend(_format_quadratic_bond_section(df))
+
+    # For v0.1 export, we emit nonbond parameters from atom_types (lj_a/lj_b).
+    if "atom_types" in norm_tables and norm_tables["atom_types"] is not None:
+        df = _require_df(norm_tables["atom_types"], table="atom_types")
+        lines.extend(_format_nonbond_12_6_section_from_atom_types(df))
+
+    # ---- unknown sections (sorted header order for determinism) ----
+    for header in sorted(unknown_sections.keys()):
+        body = unknown_sections[header]
+        lines.append(header)
+        lines.extend(body)
+
+    # Ensure file ends with newline. Use newline="" to prevent newline translation.
+    out_text = "\n".join(lines) + "\n"
+    out_path = Path(path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with out_path.open("w", encoding="utf-8", newline="") as f:
+        f.write(out_text)
+
+
+# ----------------------------
+# Parsing helpers
+# ----------------------------
+
+
+_SECTION_HEADER_RE = re.compile(r"^\s*#")
+
+
+def _split_sections(text: str) -> tuple[list[tuple[str, list[str]]], dict[str, list[str]]]:
+    """Split `.frc` text into (header, body_lines) blocks.
+
+    Returns:
+        (sections, unknown_sections_seed)
+
+    Notes:
+        - `sections` includes *only* lines that are inside a `#...` section.
+        - Text before the first section is preserved as an unknown pseudo-section
+          keyed by `#preamble` for lossless roundtrips.
+    """
+    lines = text.splitlines()
+
+    sections: list[tuple[str, list[str]]] = []
+    unknown: dict[str, list[str]] = {}
+
+    current_header: str | None = None
+    current_body: list[str] = []
+
+    preamble: list[str] = []
+    i = 0
+    while i < len(lines) and not _SECTION_HEADER_RE.match(lines[i]):
+        preamble.append(lines[i])
+        i += 1
+    if preamble:
+        # Preserve preamble (body-only) under a stable synthetic header.
+        unknown["#preamble"] = preamble
+
+    for line in lines[i:]:
+        if _SECTION_HEADER_RE.match(line):
+            # flush previous
+            if current_header is not None:
+                sections.append((current_header, current_body))
+            current_header = line  # exact header line (no newline)
+            current_body = []
+        else:
+            if current_header is None:
+                # Shouldn't happen due to preamble handling, but keep safe.
+                preamble.append(line)
+                unknown["#preamble"] = preamble
+            else:
+                current_body.append(line)
+
+    if current_header is not None:
+        sections.append((current_header, current_body))
+
+    return sections, unknown
+
+
+def _strip_inline_comment(s: str) -> str:
+    # Treat ';' as comment leader if present (common in some FF formats).
+    # Keep conservative: if not present, return as-is.
+    if ";" in s:
+        return s.split(";", 1)[0].rstrip()
+    return s.rstrip()
+
+
+def _is_ignorable_line(line: str) -> bool:
+    s = line.strip()
+    return (not s) or s.startswith("!") or s.startswith(";") or s.startswith("#")
+
+
+def _parse_atom_types(lines: list[str]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for raw in lines:
+        if _is_ignorable_line(raw):
+            continue
+        line = _strip_inline_comment(raw)
+        if not line.strip():
+            continue
+        toks = line.split()
+        if len(toks) < 1:
+            continue
+
+        atom_type = toks[0]
+        element = toks[1] if len(toks) >= 2 else None
+        mass = float(toks[2]) if len(toks) >= 3 else None
+        notes = " ".join(toks[3:]) if len(toks) >= 4 else None
+
+        rows.append(
+            {
+                "atom_type": atom_type,
+                "element": element,
+                "mass_amu": mass,
+                # vdw_style/lj_a/lj_b populated later from nonbond section
+                "vdw_style": "lj_ab_12_6",
+                "lj_a": None,
+                "lj_b": None,
+                "notes": notes,
+            }
+        )
+    return rows
+
+
+def _parse_quadratic_bond(lines: list[str]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for raw in lines:
+        if _is_ignorable_line(raw):
+            continue
+        line = _strip_inline_comment(raw)
+        if not line.strip():
+            continue
+        toks = line.split()
+        if len(toks) < 4:
+            raise ValueError(f"#quadratic_bond: expected at least 4 columns (t1 t2 k r0), got: {raw!r}")
+
+        t1, t2 = toks[0], toks[1]
+        k = float(toks[2])
+        r0 = float(toks[3])
+        source = " ".join(toks[4:]) if len(toks) > 4 else None
+
+        rows.append(
+            {
+                "t1": t1,
+                "t2": t2,
+                "style": "quadratic",
+                "k": k,
+                "r0": r0,
+                "source": source,
+            }
+        )
+    return rows
+
+
+_TYPE_AB_RE = re.compile(r"@type\s+a-b\b", flags=re.IGNORECASE)
+_COMB_GEOM_RE = re.compile(r"@combination\s+geometric\b", flags=re.IGNORECASE)
+
+
+def _parse_nonbond_12_6(lines: list[str]) -> dict[str, tuple[float, float]]:
+    """Parse `#nonbond(12-6)`.
+
+    Supported directives:
+    - `@type A-B`
+    - `@combination geometric`
+
+    Parameter lines expected: `atom_type lj_a lj_b`
+    """
+    saw_type = False
+    saw_comb = False
+    out: dict[str, tuple[float, float]] = {}
+
+    for raw in lines:
+        if _is_ignorable_line(raw):
+            continue
+
+        s = _strip_inline_comment(raw)
+        if not s.strip():
+            continue
+
+        if s.lstrip().startswith("@"):
+            if _TYPE_AB_RE.search(s):
+                saw_type = True
+                continue
+            if _COMB_GEOM_RE.search(s):
+                saw_comb = True
+                continue
+            raise ValueError(f"#nonbond(12-6): unsupported directive line: {raw!r}")
+
+        toks = s.split()
+        if len(toks) < 3:
+            raise ValueError(f"#nonbond(12-6): expected 3 columns (atom_type lj_a lj_b), got: {raw!r}")
+
+        at = toks[0]
+        a = float(toks[1])
+        b = float(toks[2])
+        out[at] = (a, b)
+
+    if not saw_type:
+        raise ValueError("#nonbond(12-6): missing required directive '@type A-B'")
+    if not saw_comb:
+        raise ValueError("#nonbond(12-6): missing required directive '@combination geometric'")
+
+    return out
+
+
+def _build_tables(
+    atom_types_rows: list[dict[str, Any]],
+    bonds_rows: list[dict[str, Any]],
+    nonbond_params: dict[str, tuple[float, float]],
+) -> dict[str, "Any"]:
+    import pandas as pd
+
+    if not atom_types_rows:
+        # v0.1 requires atom_types table
+        raise ValueError("parse_frc_text: missing required #atom_types section (no rows parsed)")
+
+    atom_df = pd.DataFrame(atom_types_rows)
+
+    # Apply nonbond params to atom_df
+    # Every atom type must end up with lj_a/lj_b populated due to strict validator.
+    lj_a_vals: list[Any] = []
+    lj_b_vals: list[Any] = []
+    for at in atom_df["atom_type"].tolist():
+        if at not in nonbond_params:
+            raise ValueError(f"parse_frc_text: missing nonbond(12-6) A/B parameters for atom_type {at!r}")
+        a, b = nonbond_params[at]
+        lj_a_vals.append(a)
+        lj_b_vals.append(b)
+
+    atom_df["vdw_style"] = "lj_ab_12_6"
+    atom_df["lj_a"] = lj_a_vals
+    atom_df["lj_b"] = lj_b_vals
+
+    # Ensure schema columns exist even if parser didn't include them.
+    atom_df = atom_df.loc[:, TABLE_COLUMN_ORDER["atom_types"]]
+
+    tables: dict[str, Any] = {"atom_types": atom_df}
+
+    if bonds_rows:
+        bonds_df = pd.DataFrame(bonds_rows)
+        # Ensure schema columns exist
+        bonds_df = bonds_df.loc[:, TABLE_COLUMN_ORDER["bonds"]]
+        tables["bonds"] = bonds_df
+
+    return tables
+
+
+# ----------------------------
+# Export helpers
+# ----------------------------
+
+
+def _require_df(obj: Any, *, table: str) -> "Any":
+    import pandas as pd
+
+    if not isinstance(obj, pd.DataFrame):
+        raise TypeError(f"{table}: expected pandas.DataFrame, got {type(obj).__name__}")
+    return obj
+
+
+def _fmt_float(x: Any) -> str:
+    # Stable, compact formatting for frc text (locked in tests).
+    return ("%.8g" % float(x)).rstrip()
+
+
+def _format_atom_types_section(df: Any) -> list[str]:
+    # Emit the section header exactly as MSI expects.
+    lines: list[str] = ["#atom_types"]
+    # Deterministic order already guaranteed by normalization.
+    for _, row in df.iterrows():
+        atom_type = str(row["atom_type"])
+        element = row["element"]
+        mass = row["mass_amu"]
+        notes = row["notes"]
+
+        parts = [atom_type]
+        if element is not None and str(element) != "<NA>":
+            parts.append(str(element))
+        if mass is not None and str(mass) != "<NA>":
+            parts.append(_fmt_float(mass))
+        if notes is not None and str(notes) != "<NA>":
+            parts.append(str(notes))
+        lines.append("  " + " ".join(parts))
+    return lines
+
+
+def _format_quadratic_bond_section(df: Any) -> list[str]:
+    lines: list[str] = ["#quadratic_bond"]
+    for _, row in df.iterrows():
+        t1 = str(row["t1"])
+        t2 = str(row["t2"])
+        k = _fmt_float(row["k"])
+        r0 = _fmt_float(row["r0"])
+        source = row["source"]
+
+        parts = [t1, t2, k, r0]
+        if source is not None and str(source) != "<NA>":
+            parts.append(str(source))
+        lines.append("  " + " ".join(parts))
+    return lines
+
+
+def _format_nonbond_12_6_section_from_atom_types(df: Any) -> list[str]:
+    lines: list[str] = ["#nonbond(12-6)", "  @type A-B", "  @combination geometric"]
+    for _, row in df.iterrows():
+        at = str(row["atom_type"])
+        a = _fmt_float(row["lj_a"])
+        b = _fmt_float(row["lj_b"])
+        lines.append(f"  {at} {a} {b}")
+    return lines

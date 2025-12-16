@@ -1,0 +1,2 @@
+[console_scripts]
+upm = upm.cli.main:app

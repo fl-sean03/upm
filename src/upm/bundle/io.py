@@ -1,0 +1,214 @@
+"""Bundle save/load (CSV) for UPM v0.1.
+
+A bundle is a folder rooted at `packages/<name>/<version>/` containing:
+- manifest.json
+- tables/*.csv
+- raw/source.frc
+- raw/unknown_sections.json
+
+This module intentionally avoids any dependency on codecs/CLI to prevent cycles.
+"""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+from upm.core.tables import TABLE_COLUMN_ORDER, normalize_tables
+
+from .manifest import build_manifest, read_manifest, sha256_file, write_manifest
+
+
+@dataclass(frozen=True)
+class PackageBundle:
+    root: Path
+    manifest: dict[str, Any]
+    tables: dict[str, "Any"]  # pandas.DataFrame; kept Any to avoid importing pandas at import time
+    raw: dict[str, Any]  # {"source_text": str, "unknown_sections": dict[str, list[str]]}
+
+
+def _write_text_exact(path: Path, text: str) -> None:
+    # newline="" prevents Python from translating newlines on write
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="") as f:
+        f.write(text)
+
+
+def _write_json_stable(path: Path, obj: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    text = json.dumps(obj, indent=2, sort_keys=True) + "\n"
+    path.write_text(text, encoding="utf-8")
+
+
+def _read_json(path: Path) -> Any:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _table_csv_path(root: Path, table_name: str) -> Path:
+    return root / "tables" / f"{table_name}.csv"
+
+
+def save_package(
+    root: Path,
+    *,
+    name: str,
+    version: str,
+    tables: dict[str, "Any"],  # pandas.DataFrame
+    source_text: str,
+    unknown_sections: dict[str, list[str]] | None = None,
+    units: dict[str, Any] | None = None,
+    nonbonded: dict[str, Any] | None = None,
+    features: list[str] | None = None,
+) -> dict[str, Any]:
+    """Save a package bundle to disk and return the manifest dict."""
+    root = Path(root)
+    tables_dir = root / "tables"
+    raw_dir = root / "raw"
+    tables_dir.mkdir(parents=True, exist_ok=True)
+    raw_dir.mkdir(parents=True, exist_ok=True)
+
+    if unknown_sections is None:
+        unknown_sections = {}
+
+    # ---- write raw blobs (exact) ----
+    source_path_rel = Path("raw") / "source.frc"
+    source_path = root / source_path_rel
+    _write_text_exact(source_path, source_text)
+
+    unknown_path_rel = Path("raw") / "unknown_sections.json"
+    unknown_path = root / unknown_path_rel
+    _write_json_stable(unknown_path, unknown_sections)
+
+    # ---- normalize tables then write CSVs ----
+    # Normalize for deterministic column ordering + key canonicalization.
+    norm_tables = normalize_tables(tables)
+
+    import pandas as pd  # local import to keep module import-light
+
+    table_entries: dict[str, dict[str, Any]] = {}
+    for table_name, df in norm_tables.items():
+        if df is None:
+            continue
+        if not isinstance(df, pd.DataFrame):
+            raise TypeError(f"tables['{table_name}']: expected pandas.DataFrame, got {type(df).__name__}")
+
+        out_path_rel = Path("tables") / f"{table_name}.csv"
+        out_path = root / out_path_rel
+
+        # Enforce canonical column order for known tables.
+        if table_name in TABLE_COLUMN_ORDER:
+            df_to_write = df.loc[:, TABLE_COLUMN_ORDER[table_name]]
+        else:
+            df_to_write = df
+
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        df_to_write.to_csv(
+            out_path,
+            index=False,
+            lineterminator="\n",
+            float_format="%.17g",
+        )
+
+        table_entries[table_name] = {
+            "path": str(out_path_rel).replace("\\", "/"),
+            "rows": int(len(df_to_write)),
+            "sha256": sha256_file(out_path),
+            "dtypes": {c: str(df_to_write[c].dtype) for c in df_to_write.columns},
+        }
+
+    # ---- sources list + manifest ----
+    sources = [
+        {"path": str(source_path_rel).replace("\\", "/"), "sha256": sha256_file(source_path)},
+        {"path": str(unknown_path_rel).replace("\\", "/"), "sha256": sha256_file(unknown_path)},
+    ]
+
+    manifest = build_manifest(
+        name=name,
+        version=version,
+        sources=sources,
+        tables=table_entries,
+        units=units,
+        nonbonded=nonbonded,
+        features=features,
+    )
+
+    write_manifest(root / "manifest.json", manifest)
+    return manifest
+
+
+def load_package(root: Path, *, validate_hashes: bool = False) -> PackageBundle:
+    """Load a bundle from disk.
+
+    If validate_hashes is True, recompute sha256 for sources and tables and raise
+    ValueError on any mismatch.
+    """
+    root = Path(root)
+    manifest_path = root / "manifest.json"
+    manifest = read_manifest(manifest_path)
+
+    # ---- read raw blobs ----
+    source_path = root / "raw" / "source.frc"
+    unknown_path = root / "raw" / "unknown_sections.json"
+
+    source_text = source_path.read_text(encoding="utf-8")
+    unknown_sections_obj = _read_json(unknown_path)
+    if not isinstance(unknown_sections_obj, dict):
+        raise ValueError("raw/unknown_sections.json: expected JSON object mapping section -> [lines...]")
+
+    # ---- read tables from manifest ----
+    import pandas as pd  # local import
+
+    tables: dict[str, pd.DataFrame] = {}
+    manifest_tables = manifest.get("tables", {})
+    if not isinstance(manifest_tables, dict):
+        raise ValueError("manifest.json: tables must be an object")
+
+    for table_name, meta in manifest_tables.items():
+        if not isinstance(meta, dict):
+            raise ValueError(f"manifest.json: tables.{table_name} must be an object")
+        rel = meta.get("path")
+        if not isinstance(rel, str) or not rel:
+            raise ValueError(f"manifest.json: tables.{table_name}.path must be a non-empty string")
+
+        csv_path = root / rel
+        df = pd.read_csv(csv_path)
+        tables[table_name] = df
+
+    # Normalize after read to enforce canonical dtypes and key ordering.
+    tables_norm = normalize_tables(tables)
+
+    # ---- optional hash validation ----
+    if validate_hashes:
+        # Validate sources
+        sources = manifest.get("sources", [])
+        if not isinstance(sources, list):
+            raise ValueError("manifest.json: sources must be an array")
+        for item in sources:
+            if not isinstance(item, dict):
+                raise ValueError("manifest.json: sources[*] must be an object")
+            rel = item.get("path")
+            expected = item.get("sha256")
+            if not isinstance(rel, str) or not isinstance(expected, str):
+                raise ValueError("manifest.json: sources[*] must have string path and sha256")
+            actual = sha256_file(root / rel)
+            if actual != expected:
+                raise ValueError(f"sha256 mismatch for {rel}: expected {expected}, got {actual}")
+
+        # Validate tables
+        for table_name, meta in manifest_tables.items():
+            rel = meta.get("path")
+            expected = meta.get("sha256")
+            if not isinstance(rel, str) or not isinstance(expected, str):
+                raise ValueError(f"manifest.json: tables.{table_name} must have string path and sha256")
+            actual = sha256_file(root / rel)
+            if actual != expected:
+                raise ValueError(f"sha256 mismatch for {rel}: expected {expected}, got {actual}")
+
+    return PackageBundle(
+        root=root,
+        manifest=manifest,
+        tables=tables_norm,
+        raw={"source_text": source_text, "unknown_sections": unknown_sections_obj},
+    )
