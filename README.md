@@ -32,7 +32,7 @@ Not included in v0.1.0:
 
 ```
 
-assets/          # provided long .frc / .prm inputs for demos + tests
+assets/          # small auxiliary assets (e.g., .prm). This repo intentionally does NOT ship a “base” .frc.
 src/upm/         # library code
 packages/        # generated packages (gitignored by default)
 workspaces/      # runnable demos; each has run.py and outputs/
@@ -66,13 +66,13 @@ pytest -q
 ### 1) Import a force field (`*.frc`) into a versioned package
 
 ```bash
-upm import-frc assets/cvff_IFF_metal_oxides_v2.frc --name cvff-iff --version v2
+upm import-frc workspaces/02_usm_upm_msi2lmp_pipeline/inputs/mxn_demo_minimal.frc --name mxn-demo --version v1
 ```
 
 This creates:
 
 ```
-packages/cvff-iff/v2/
+packages/mxn-demo/v1/
   manifest.json
   tables/...
   raw/source.frc
@@ -82,15 +82,15 @@ packages/cvff-iff/v2/
 ### 2) Validate a package
 
 ```bash
-upm validate --package cvff-iff@v2
+upm validate --package mxn-demo@v1
 # or:
-upm validate --path packages/cvff-iff/v2
+upm validate --path packages/mxn-demo/v1
 ```
 
 ### 3) Export a full `*.frc`
 
 ```bash
-upm export-frc --package cvff-iff@v2 --mode full --out outputs/full.frc
+upm export-frc --package mxn-demo@v1 --mode full --out outputs/full.frc
 ```
 
 ### 4) Export a minimal `*.frc` using `requirements.json`
@@ -99,8 +99,8 @@ Create `requirements.json`:
 
 ```json
 {
-  "atom_types": ["c3", "o", "h"],
-  "bond_types": [["c3","o"], ["c3","h"]],
+  "atom_types": ["cx1", "ti1", "hoy", "omx"],
+  "bond_types": [["cx1","ti1"], ["hoy","omx"]],
   "angle_types": [],
   "dihedral_types": []
 }
@@ -110,7 +110,7 @@ Then:
 
 ```bash
 upm export-frc \
-  --package cvff-iff@v2 \
+  --package mxn-demo@v1 \
   --mode minimal \
   --requirements requirements.json \
   --out outputs/minimal.frc
@@ -136,10 +136,7 @@ Outputs:
 ### Workspace: minimal subset export
 
 ```bash
-# first import a package:
-upm import-frc assets/cvff_IFF_metal_oxides_v2.frc --name cvff-iff --version v2
-
-# then run:
+# Self-contained: no repo-level assets required.
 python workspaces/01_minimal_subset_export/run.py
 ```
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from upm.codecs.msi_frc import parse_frc_text, read_frc, write_frc
 
@@ -110,3 +111,37 @@ def test_export_is_deterministic_bytes_include_raw(tmp_path: Path) -> None:
     write_frc(p2, tables=tables, unknown_sections=unknown, include_raw=True, mode="full")
 
     assert p1.read_bytes() == p2.read_bytes()
+
+
+def test_parse_bond_increments() -> None:
+    """Verify bond_increments section is parsed correctly."""
+    # Use the CO2 source FRC that has bond_increments
+    frc_path = Path("/home/sf2/LabWork/Workspace/25-MOLSAIC/MOLSAICV4/assets/NIST/CO2_construct/cvff_iff_ILs.frc")
+    if not frc_path.exists():
+        pytest.skip("cvff_iff_ILs.frc not found")
+
+    tables, _ = read_frc(frc_path, validate=False)
+
+    assert "bond_increments" in tables, "bond_increments table should be parsed"
+    bi_df = tables["bond_increments"]
+    assert not bi_df.empty, "bond_increments table should not be empty"
+
+    # Verify expected columns exist
+    assert "t1" in bi_df.columns
+    assert "t2" in bi_df.columns
+    assert "delta_ij" in bi_df.columns
+    assert "delta_ji" in bi_df.columns
+
+    # Find cdc-cdo entry (may be stored as cdc-cdo or cdo-cdc depending on canonicalization)
+    cdc_cdo = bi_df[((bi_df["t1"] == "cdc") & (bi_df["t2"] == "cdo")) | ((bi_df["t1"] == "cdo") & (bi_df["t2"] == "cdc"))]
+    assert len(cdc_cdo) == 1, f"Expected exactly one cdc-cdo entry, found {len(cdc_cdo)}"
+
+    row = cdc_cdo.iloc[0]
+    # If stored as cdc-cdo, delta_ij should be -0.03, delta_ji should be 0.03
+    # If stored as cdo-cdc (swapped), the values would be swapped too
+    if row["t1"] == "cdc":
+        assert abs(row["delta_ij"] - (-0.03)) < 0.001, f"delta_ij should be -0.03, got {row['delta_ij']}"
+        assert abs(row["delta_ji"] - 0.03) < 0.001, f"delta_ji should be 0.03, got {row['delta_ji']}"
+    else:
+        assert abs(row["delta_ij"] - 0.03) < 0.001, f"delta_ij should be 0.03 (swapped), got {row['delta_ij']}"
+        assert abs(row["delta_ji"] - (-0.03)) < 0.001, f"delta_ji should be -0.03 (swapped), got {row['delta_ji']}"

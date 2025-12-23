@@ -1,7 +1,7 @@
 # DevGuide_v0.1.0 — UPM (Unified Parameter Model)
 
 Status target: **UPM v0.1.0 working end-to-end** from a fresh repo  
-Starting state: fresh empty repo + this dev guide + `assets/` containing the provided `.frc` and `.prm`
+Starting state: fresh empty repo + this dev guide + `assets/` containing the provided `.prm` (this repo intentionally does NOT ship a “base” `.frc`).
 
 ---
 
@@ -34,13 +34,10 @@ From a fresh repo, you must be able to:
 
 ## 2) What’s in `assets/` (inputs you have)
 
-You have two long files in `assets/` (names may vary by copy):
-
-- A CVFF/IFF-style `.frc` (e.g., `cvff_IFF_metal_oxides_v2.frc`)
-- A CHARMM-style `.prm` (e.g., `IFF_CHARMM36_metal_and_alumina_phases_V8.prm`)
+This repo may include long parameter files under `assets/` (names may vary by copy). For MolSAIC v4, treat these as auxiliary inputs (e.g., `.prm`), not as a committed “base” `.frc` dependency.
 
 In v0.1.0:
-- `.frc` is fully in-scope (subset parse + export).
+- `.frc` is fully in-scope (subset parse + export), but examples should use an in-repo demo `.frc` under `workspaces/` (see below).
 - `.prm` is **stub-only** (we keep it in assets for future versions; implement a codec stub that clearly errors).
 
 ---
@@ -83,7 +80,6 @@ upm/
   README.md
   pyproject.toml
   assets/
-    cvff_IFF_metal_oxides_v2.frc
     IFF_CHARMM36_metal_and_alumina_phases_V8.prm
   src/upm/
     __init__.py
@@ -301,8 +297,8 @@ Use `typer`.
 ### 11.1 Commands
 
 #### `upm import-frc`
-- `upm import-frc assets/cvff_IFF_metal_oxides_v2.frc --name cvff-iff --version v2`
-- Creates `packages/cvff-iff/v2/` with manifest + tables + raw blobs.
+- `upm import-frc workspaces/02_usm_upm_msi2lmp_pipeline/inputs/mxn_demo_minimal.frc --name mxn-demo --version v1`
+ - Creates `packages/mxn-demo/v1/` with manifest + tables + raw blobs.
 
 #### `upm validate`
 - `upm validate --package cvff-iff@v2`
@@ -402,7 +398,6 @@ Outputs:
 Validation:
 ```bash
 python workspaces/00_quickcheck_import_export/run.py
-upm import-frc assets/cvff_IFF_metal_oxides_v2.frc --name cvff-iff --version v2
 python workspaces/01_minimal_subset_export/run.py
 ```
 

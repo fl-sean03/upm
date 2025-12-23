@@ -36,6 +36,7 @@ def _register_commands() -> None:
 
     Importing these modules must remain lightweight so `upm --help` is fast.
     """
+    from upm.cli.commands import build_frc as build_frc_cmd
     from upm.cli.commands import derive_req as derive_req_cmd
     from upm.cli.commands import export_frc as export_frc_cmd
     from upm.cli.commands import import_frc as import_frc_cmd
@@ -45,6 +46,7 @@ def _register_commands() -> None:
     validate_pkg_cmd.register(app)
     export_frc_cmd.register(app)
     derive_req_cmd.register(app)
+    build_frc_cmd.register(app)
 
 
 _register_commands()
