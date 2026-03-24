@@ -489,12 +489,24 @@ def _parse_bond_increments(lines: list[str]) -> list[dict[str, Any]]:
 # ----------------------------
 
 
+# Extended parsers (split to _frc_parser_ext.py for 500 LOC compliance)
+# Re-exported here so msi_frc.py can import from _frc_parser
+from upm.codecs._frc_parser_ext import (  # noqa: E402, F401
+    _parse_torsion_1,
+    _parse_out_of_plane,
+    _parse_equivalence,
+)
+
+
 def _build_tables(
     atom_types_rows: list[dict[str, Any]],
     bonds_rows: list[dict[str, Any]],
     angles_rows: list[dict[str, Any]],
     nonbond_params: dict[str, tuple[float, float]],
     bond_increments_rows: list[dict[str, Any]] | None = None,
+    torsions_rows: list[dict[str, Any]] | None = None,
+    oop_rows: list[dict[str, Any]] | None = None,
+    equivalences_rows: list[dict[str, Any]] | None = None,
 ) -> dict[str, "Any"]:
     import pandas as pd
 
@@ -541,8 +553,21 @@ def _build_tables(
 
     if bond_increments_rows:
         bi_df = pd.DataFrame(bond_increments_rows)
-        # bond_increments has columns: t1, t2, delta_ij, delta_ji
-        # No TABLE_COLUMN_ORDER for bond_increments, use as-is
         tables["bond_increments"] = bi_df
+
+    if torsions_rows:
+        torsions_df = pd.DataFrame(torsions_rows)
+        torsions_df = torsions_df.loc[:, TABLE_COLUMN_ORDER["torsions"]]
+        tables["torsions"] = torsions_df
+
+    if oop_rows:
+        oop_df = pd.DataFrame(oop_rows)
+        oop_df = oop_df.loc[:, TABLE_COLUMN_ORDER["out_of_plane"]]
+        tables["out_of_plane"] = oop_df
+
+    if equivalences_rows:
+        equiv_df = pd.DataFrame(equivalences_rows)
+        equiv_df = equiv_df.loc[:, TABLE_COLUMN_ORDER["equivalences"]]
+        tables["equivalences"] = equiv_df
 
     return tables

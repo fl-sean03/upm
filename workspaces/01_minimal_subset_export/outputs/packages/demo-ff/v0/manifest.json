@@ -1,0 +1,57 @@
+{
+  "created_utc": "2025-12-18T21:13:06Z",
+  "features": [],
+  "name": "demo-ff",
+  "nonbonded": {
+    "form": "12-6",
+    "mixing": "geometric",
+    "style": "A-B"
+  },
+  "schema_version": "upm-1.0",
+  "sources": [
+    {
+      "path": "raw/source.frc",
+      "sha256": "d2deac76dd797bf1bff47570a5f58047c8a91ff491665559afb34a5141a82545"
+    },
+    {
+      "path": "raw/unknown_sections.json",
+      "sha256": "25e22161944efbf688acac87b7b367f056ddb56086da82921a941e56c56408cc"
+    }
+  ],
+  "tables": {
+    "atom_types": {
+      "dtypes": {
+        "atom_type": "string",
+        "element": "string",
+        "lj_a": "Float64",
+        "lj_b": "Float64",
+        "mass_amu": "Float32",
+        "notes": "string",
+        "vdw_style": "string"
+      },
+      "path": "tables/atom_types.csv",
+      "rows": 3,
+      "sha256": "7302569a4eb9073181a8db1f7fe5d419fc09d755171b5388dd62103d65ed9a73"
+    },
+    "bonds": {
+      "dtypes": {
+        "k": "Float64",
+        "r0": "Float64",
+        "source": "string",
+        "style": "string",
+        "t1": "string",
+        "t2": "string"
+      },
+      "path": "tables/bonds.csv",
+      "rows": 2,
+      "sha256": "79716247f70c91851b923134db0e3ca91bdb5779d868415e7a15e90c4550b201"
+    }
+  },
+  "units": {
+    "angle": "degree",
+    "energy": "kcal/mol",
+    "length": "angstrom",
+    "mass": "amu"
+  },
+  "version": "v0"
+}

@@ -1,57 +1,58 @@
 # UPM — Unified Parameter Model
 
-UPM is a **standalone** Python library + CLI for managing, validating, and exporting **force-field parameter packages** (starting with Materials Studio / BIOSYM-style `*.frc` used by `msi2lmp`).
+UPM is a **standalone** Python library + CLI for managing, validating, and exporting **force-field parameter packages**. It supports both MSI/BIOSYM `.frc` (for LAMMPS via `msi2lmp`) and CHARMM `.prm` (for NAMD/CHARMM/OpenMM) formats.
 
 It is designed to:
-- eliminate “v86 / v93 / random copies” parameter sprawl
-- make parameter sets **versioned + reproducible + diffable**
-- export **minimal** parameter files for a specific set of required atom types / interactions
-- stay independent of any particular structure library (USM can be integrated later)
+- Eliminate parameter file sprawl (dozens of `.frc`/`.prm` copies across projects)
+- Make parameter sets **versioned, reproducible, and diffable**
+- Export **minimal** parameter files for a specific set of required atom types
+- Provide **cross-package search and comparison** via the registry module
+- Stay independent of any particular structure library
 
 UPM does **not** store charges. Charges belong to the structure representation.
 
 ---
 
-## What’s included in v0.1.0
+## What's in v2.0.0
 
-- Import: `*.frc` → canonical tables + manifest + raw preserved sections
-- Validate: schema + canonicalization invariants
-- Export: full `*.frc` from canonical tables
-- Export: minimal `*.frc` from a `requirements.json` file
-- Workspace demos under `workspaces/`
+### Codecs
+- **MSI `.frc`** (BIOSYM format): Full read/write for `#atom_types`, `#quadratic_bond`, `#quadratic_angle`, `#torsion_1`, `#out_of_plane`, `#equivalence`, `#nonbond(12-6)`, `#bond_increments`. Unknown sections preserved losslessly.
+- **CHARMM `.prm`**: Full read/write for BONDS, ANGLES, DIHEDRALS, IMPROPER, NONBONDED, NBFIX. CMAP preserved as raw passthrough. LJ conversion (epsilon/Rmin ↔ A/B) roundtrip-verified.
 
-Not included in v0.1.0:
-- Full CHARMM `*.prm` parsing/export (stub only)
-- Universal conversion between CVFF/PCFF and CHARMM “physics”
-- Automated atom typing / charge models
-- DB server
+### Core
+- Table schemas for 7 parameter types: `atom_types`, `bonds`, `angles`, `torsions`, `out_of_plane`, `equivalences`, `pair_overrides`
+- Deterministic canonicalization (bond/angle/dihedral key ordering)
+- SHA256-verified package bundles with manifest provenance
 
----
+### Build
+- `FRCBuilder` with protocol-based `ParameterSource` and `ChainedSource` fallback
+- Built-in sources: `ParameterSetSource`, `PlaceholderSource`, `ExistingFRCSource`
 
-## Repo layout
+### Registry
+- Discover parameter packages via pip entry points (`upm.data_packages` group) or local directories
+- Cross-package search by atom type or bond type
+- Structured diffs between parameter sets (added/removed types, changed values)
 
+### CLI (9 commands)
+```
+upm version         Print version
+upm import-frc      Import .frc into versioned package
+upm import-prm      Import CHARMM .prm and display summary
+upm export-frc      Export .frc from package
+upm build-frc       Build .frc from termset + parameterset
+upm validate        Validate package bundle
+upm derive-req      Derive requirements from structure
+upm search          Search atom types across packages
+upm diff            Compare two force field files (.frc or .prm)
 ```
 
-assets/          # small auxiliary assets (e.g., .prm). This repo intentionally does NOT ship a “base” .frc.
-src/upm/         # library code
-packages/        # generated packages (gitignored by default)
-workspaces/      # runnable demos; each has run.py and outputs/
-tests/           # pytest suite
-docs/            # data model, workflows, governance
-
-````
-
-Workspaces can be nested arbitrarily under `workspaces/`. Each workspace must have a `run.py` entrypoint and should write outputs to `outputs/`.
-
 ---
 
-## Install (dev)
+## Install
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
 pip install -e .[dev]
-````
+```
 
 Run tests:
 
@@ -63,123 +64,78 @@ pytest -q
 
 ## Quickstart
 
-### 1) Import a force field (`*.frc`) into a versioned package
+### Import and roundtrip a force field
 
-```bash
-upm import-frc workspaces/02_usm_upm_msi2lmp_pipeline/inputs/mxn_demo_minimal.frc --name mxn-demo --version v1
+```python
+from upm.codecs.msi_frc import read_frc, write_frc
+from upm.codecs.charmm_prm import read_prm, write_prm
+
+# Read .frc
+tables, unknown = read_frc("cvff_interface_v1_5.frc", validate=False)
+write_frc("output.frc", tables=tables, mode="full")
+
+# Read .prm
+tables, raw = read_prm("charmm27_interface_v1_5.prm")
+write_prm("output.prm", tables=tables, raw_sections=raw)
 ```
 
-This creates:
+### Search and diff
 
-```
-packages/mxn-demo/v1/
-  manifest.json
-  tables/...
-  raw/source.frc
-  raw/unknown_sections.json
-```
+```python
+from upm.registry import discover_local_packages, PackageIndex, diff_tables
 
-### 2) Validate a package
+packages = discover_local_packages(Path("./packages"))
+index = PackageIndex(packages)
+results = index.search_atom_type("Au")
 
-```bash
-upm validate --package mxn-demo@v1
-# or:
-upm validate --path packages/mxn-demo/v1
+diff = diff_tables(old_tables, new_tables)
+print(diff.summary())
 ```
 
-### 3) Export a full `*.frc`
+### Build minimal .frc for a structure
 
-```bash
-upm export-frc --package mxn-demo@v1 --mode full --out outputs/full.frc
+```python
+from upm.build import FRCBuilder, ChainedSource, ParameterSetSource, PlaceholderSource
+
+source = ChainedSource([ParameterSetSource(ps), PlaceholderSource(elem_map)])
+builder = FRCBuilder(termset, source)
+builder.write("minimal.frc")
 ```
-
-### 4) Export a minimal `*.frc` using `requirements.json`
-
-Create `requirements.json`:
-
-```json
-{
-  "atom_types": ["cx1", "ti1", "hoy", "omx"],
-  "bond_types": [["cx1","ti1"], ["hoy","omx"]],
-  "angle_types": [],
-  "dihedral_types": []
-}
-```
-
-Then:
-
-```bash
-upm export-frc \
-  --package mxn-demo@v1 \
-  --mode minimal \
-  --requirements requirements.json \
-  --out outputs/minimal.frc
-```
-
-By default, missing required parameters cause a hard error. (If an `--allow-missing` debug flag exists in your build, it must warn loudly and write a `missing.json` report.)
 
 ---
 
-## Workspaces (runnable demos)
+## Repo layout
 
-### Workspace: import → export(full) → re-import round-trip
-
-```bash
-python workspaces/00_quickcheck_import_export/run.py
+```
+src/upm/         # Library code
+  core/          # Data model, tables, validation, resolver
+  codecs/        # .frc and .prm parsers/writers
+  build/         # FRCBuilder and parameter sources
+  registry/      # Package discovery, search, diff
+  bundle/        # Versioned package storage
+  io/            # JSON I/O for requirements, termsets
+  cli/           # Typer-based CLI
+assets/          # Reference .prm file
+tests/           # 170 pytest tests
+docs/            # API reference, migration guide, data package spec
+workspaces/      # Runnable demos
 ```
 
-Outputs:
+---
 
-* `workspaces/00_quickcheck_import_export/outputs/full_export.frc`
-* `workspaces/00_quickcheck_import_export/outputs/roundtrip_report.json`
+## Documentation
 
-### Workspace: minimal subset export
-
-```bash
-# Self-contained: no repo-level assets required.
-python workspaces/01_minimal_subset_export/run.py
-```
-
-Outputs:
-
-* `workspaces/01_minimal_subset_export/outputs/minimal.frc`
+- [API Reference](docs/API.md)
+- [Migration Guide (v0.1 → v2.0)](docs/MIGRATION_v1_to_v2.md)
+- [Creating a Data Package](docs/DATA_PACKAGE.md)
 
 ---
 
-## Supported `.frc` sections (v0.1.0)
+## Design Principles
 
-UPM v0.1.0 focuses on a subset required for `msi2lmp` workflows. Typically:
-
-* `#atom_types`
-* `#quadratic_bond`
-* `#quadratic_angle` (if implemented in the current repo state)
-* `#torsion_1` (if implemented)
-* `#nonbond(12-6)` with `@type A-B` and `@combination geometric`
-
-Everything else is preserved in `raw/unknown_sections.json` and is not lost.
-
-See `docs/FORMAT_SUPPORT.md` for the exact list once implemented.
-
----
-
-## Design principles
-
-* **Stand-alone:** no dependency on USM or any orchestrator.
-* **Deterministic:** canonical ordering + stable exports.
-* **No silent physics changes:** missing required terms fail by default.
-* **Provenance-first:** manifests record hashes of sources and tables.
-* **Extensible:** additional codecs (e.g., CHARMM PRM) can be added later.
-
----
-
-## Future integration
-
-When USM (structures) is available, integration is an adapter that produces the same `Requirements` object used today. UPM’s core flow remains:
-
-> Structure/Topology (any source) → Requirements → Resolve → Export
-
----
-
-## License / attribution
-
-TBD (set explicitly before publishing publicly). Ensure any vendored parameter sets in `assets/` or committed `packages/` are compatible with the chosen license.
+- **Standalone:** No dependency on USM or any orchestrator
+- **Deterministic:** Canonical ordering, stable exports, SHA256 manifests
+- **No silent physics changes:** Missing required terms fail by default
+- **Provenance-first:** Every package records hashes of sources and tables
+- **Multi-format:** .frc and .prm codecs with verified roundtrips
+- **Extensible:** Registry discovers data packages via pip entry points (OpenFF model)

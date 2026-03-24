@@ -1,0 +1,13 @@
+{
+  "atom_types": [
+    "c3",
+    "h"
+  ],
+  "bond_types": [
+    [
+      "c3",
+      "h"
+    ]
+  ],
+  "minimal_frc": "/home/sf2/LabWork/Workspace/25-MOLSAIC/MOLSAICV4/src/upm/workspaces/01_minimal_subset_export/outputs/minimal.frc"
+}

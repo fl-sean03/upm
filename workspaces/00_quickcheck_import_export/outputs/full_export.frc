@@ -1,0 +1,19 @@
+This is a preamble line that must be preserved.
+Another preamble line.
+#atom_types
+  c3 C 12.011 carbon sp3
+  h H 1.008 hydrogen
+  o O 15.999 oxygen
+#quadratic_bond
+  c3 h 250 1.09
+  c3 o 100 1.23 src:demo
+#nonbond(12-6)
+  @type A-B
+  @combination geometric
+  c3 1 2
+  h 0.1 0.2
+  o 10 20
+#unsupported_section
+line1
+  line2 with leading spaces
+

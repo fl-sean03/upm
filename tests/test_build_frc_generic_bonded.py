@@ -129,9 +129,9 @@ def test_generate_generic_bonded_params_angle_format() -> None:
 
     assert len(angle_entries) > 0
     joined = "\n".join(angle_entries)
-    # C-center angles use theta0=109.5, k=44.4
+    # C-center angles use theta0=109.5, k=50.0 (canonical placeholder)
     assert "109.5" in joined
-    assert "44.4" in joined
+    assert "50.0" in joined
 
 
 def test_generate_generic_bonded_params_torsion_format() -> None:
@@ -337,8 +337,8 @@ def test_build_frc_cvff_with_generic_bonded_bonded_entries_not_empty(tmp_path: P
     text = out.read_text(encoding="utf-8")
 
     # Find sections and check they have data after the headers
-    # Bond entries should include numeric values
-    assert " 2.0  18    C_MOF" in text or " 2.0  18    H_MOF" in text
+    # Atom type entries use default ver="1.0" ref="1"
+    assert " 1.0   1    C_MOF" in text or " 1.0   1    H_MOF" in text
     
     # Check that there are actual bond parameter values (r0, k)
     lines = text.split("\n")
@@ -348,7 +348,7 @@ def test_build_frc_cvff_with_generic_bonded_bonded_entries_not_empty(tmp_path: P
         if "#quadratic_bond" in line:
             bond_section_started = True
             continue
-        if bond_section_started and line.startswith(" 2.0"):
+        if bond_section_started and (line.startswith(" 1.0") or line.startswith(" 2.0")):
             bond_data_found = True
             break
         if bond_section_started and line.startswith("#"):

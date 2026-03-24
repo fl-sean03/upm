@@ -1,0 +1,11 @@
+{
+  "full_export_path": "/home/sf2/LabWork/Workspace/25-MOLSAIC/MOLSAICV4/src/upm/workspaces/00_quickcheck_import_export/outputs/full_export.frc",
+  "package_root": "/home/sf2/LabWork/Workspace/25-MOLSAIC/MOLSAICV4/src/upm/workspaces/00_quickcheck_import_export/outputs/packages/demo-ff/v0",
+  "tables_equal": true,
+  "unknown_sections_equal": true,
+  "unknown_sections_headers": [
+    "#preamble",
+    "#unsupported_section"
+  ],
+  "unknown_sections_len": 2
+}

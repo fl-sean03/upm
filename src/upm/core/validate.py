@@ -261,6 +261,73 @@ def validate_angles(df: "pd.DataFrame") -> None:
         raise TableValidationError(violations)
 
 
+def validate_torsions(df: "pd.DataFrame") -> None:
+    """Validate `torsions` schema + invariants."""
+    df = _require_dataframe(df, table="torsions")
+
+    violations: list[Violation] = []
+    _check_required_columns(df, table="torsions", violations=violations)
+    _check_no_extra_columns(df, table="torsions", violations=violations)
+
+    if violations:
+        raise TableValidationError(violations)
+
+    for col in ("t1", "t2", "t3", "t4"):
+        _check_non_empty_strings(df, table="torsions", col=col, violations=violations)
+    _check_non_empty_strings(df, table="torsions", col="style", violations=violations)
+
+    bad_style = df["style"].astype("string").str.strip() != "torsion_1"
+    if bad_style.any():
+        violations.append(Violation("torsions", "style: only 'torsion_1' supported in v2.0"))
+
+    _check_numeric_non_null_finite(df, table="torsions", col="kphi", violations=violations)
+    _check_numeric_non_null_finite(df, table="torsions", col="phi0", violations=violations)
+    _check_unique_key(df, table="torsions", cols=["t1", "t2", "t3", "t4", "style"], violations=violations)
+
+    if violations:
+        raise TableValidationError(violations)
+
+
+def validate_out_of_plane(df: "pd.DataFrame") -> None:
+    """Validate `out_of_plane` schema + invariants."""
+    df = _require_dataframe(df, table="out_of_plane")
+
+    violations: list[Violation] = []
+    _check_required_columns(df, table="out_of_plane", violations=violations)
+    _check_no_extra_columns(df, table="out_of_plane", violations=violations)
+
+    if violations:
+        raise TableValidationError(violations)
+
+    for col in ("t1", "t2", "t3", "t4"):
+        _check_non_empty_strings(df, table="out_of_plane", col=col, violations=violations)
+    _check_non_empty_strings(df, table="out_of_plane", col="style", violations=violations)
+
+    _check_numeric_non_null_finite(df, table="out_of_plane", col="kchi", violations=violations)
+    _check_numeric_non_null_finite(df, table="out_of_plane", col="chi0", violations=violations)
+
+    if violations:
+        raise TableValidationError(violations)
+
+
+def validate_equivalences(df: "pd.DataFrame") -> None:
+    """Validate `equivalences` schema + invariants."""
+    df = _require_dataframe(df, table="equivalences")
+
+    violations: list[Violation] = []
+    _check_required_columns(df, table="equivalences", violations=violations)
+    _check_no_extra_columns(df, table="equivalences", violations=violations)
+
+    if violations:
+        raise TableValidationError(violations)
+
+    _check_non_empty_strings(df, table="equivalences", col="atom_type", violations=violations)
+    _check_unique_key(df, table="equivalences", cols=["atom_type"], violations=violations)
+
+    if violations:
+        raise TableValidationError(violations)
+
+
 def validate_tables(tables: dict[str, "pd.DataFrame"]) -> None:
     """Validate a tables dict for v0.1.
 
@@ -299,8 +366,24 @@ def validate_tables(tables: dict[str, "pd.DataFrame"]) -> None:
         except TableValidationError as e:
             violations.extend(e.violations)
 
-    # `pair_overrides` intentionally not validated semantically in v0.1 minimal,
-    # but if present we still enforce schema strictness to preserve determinism.
+    if "torsions" in tables and tables["torsions"] is not None:
+        try:
+            validate_torsions(tables["torsions"])
+        except TableValidationError as e:
+            violations.extend(e.violations)
+
+    if "out_of_plane" in tables and tables["out_of_plane"] is not None:
+        try:
+            validate_out_of_plane(tables["out_of_plane"])
+        except TableValidationError as e:
+            violations.extend(e.violations)
+
+    if "equivalences" in tables and tables["equivalences"] is not None:
+        try:
+            validate_equivalences(tables["equivalences"])
+        except TableValidationError as e:
+            violations.extend(e.violations)
+
     if "pair_overrides" in tables and tables["pair_overrides"] is not None:
         df = _require_dataframe(tables["pair_overrides"], table="pair_overrides")
         local: list[Violation] = []
