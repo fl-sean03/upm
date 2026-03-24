@@ -490,7 +490,8 @@ def _parse_bond_increments(lines: list[str]) -> list[dict[str, Any]]:
 
 
 # Extended parsers (split to _frc_parser_ext.py for 500 LOC compliance)
-from upm.codecs._frc_parser_ext import (  # noqa: E402
+# Re-exported here so msi_frc.py can import from _frc_parser
+from upm.codecs._frc_parser_ext import (  # noqa: E402, F401
     _parse_torsion_1,
     _parse_out_of_plane,
     _parse_equivalence,
