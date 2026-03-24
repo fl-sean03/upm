@@ -1,0 +1,15 @@
+#atom_types
+  c3  C  12.011  carbon sp3
+  o   O  15.999  oxygen
+  h   H  1.008   hydrogen
+#quadratic_bond
+  o  c3  100.0  1.23
+  c3 h   250.0  1.09
+#nonbond(12-6)
+  @type A-B
+  @combination geometric
+  c3  1.0   2.0
+  o   10.0  20.0
+  h   0.1   0.2
+#unsupported_section
+kept

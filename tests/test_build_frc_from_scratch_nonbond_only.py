@@ -35,7 +35,7 @@ def test_build_frc_nonbond_only_missing_types_error_is_sorted(tmp_path: Path) ->
     with pytest.raises(MissingTypesError) as ei:
         build_frc_nonbond_only(ts, ps, out_path=tmp_path / "out.frc")
 
-    assert ei.value.missing_atom_types == ("b",)
+    assert ei.value.missing_types == ("b",)
 
 
 def test_build_frc_nonbond_only_is_byte_deterministic(tmp_path: Path) -> None:

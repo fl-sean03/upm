@@ -1,0 +1,4 @@
+atom_type,element,mass_amu,vdw_style,lj_a,lj_b,notes
+c3,C,12.01099967956543,lj_ab_12_6,1,2,carbon sp3
+h,H,1.0080000162124634,lj_ab_12_6,0.10000000000000001,0.20000000000000001,hydrogen
+o,O,15.99899959564209,lj_ab_12_6,10,20,oxygen

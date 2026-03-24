@@ -1,0 +1,12 @@
+#atom_types
+  c3 C 12.011 carbon sp3
+  h H 1.008 hydrogen
+#quadratic_bond
+  c3 h 250 1.09
+#nonbond(12-6)
+  @type A-B
+  @combination geometric
+  c3 1 2
+  h 0.1 0.2
+#unsupported_section
+kept

@@ -1,0 +1,17 @@
+[
+  {
+    "body": [
+      "This is a preamble line that must be preserved.",
+      "Another preamble line."
+    ],
+    "header": "#preamble"
+  },
+  {
+    "body": [
+      "line1",
+      "  line2 with leading spaces",
+      ""
+    ],
+    "header": "#unsupported_section"
+  }
+]

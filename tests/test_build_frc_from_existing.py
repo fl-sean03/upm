@@ -132,7 +132,7 @@ class TestBuildFrcFromExisting:
                 strict=True,
             )
 
-        assert "missing_type" in exc_info.value.missing_atom_types
+        assert "missing_type" in exc_info.value.missing_types
 
     def test_continues_without_error_non_strict_mode(self, tmp_path: Path) -> None:
         """build_frc_from_existing proceeds with partial types when strict=False."""
@@ -222,7 +222,7 @@ class TestBuildFrcFromExisting:
             )
 
         # Error should mention the missing bond
-        assert "cdc-cdo" in exc_info.value.missing_atom_types
+        assert "cdc-cdo" in exc_info.value.missing_types
 
     def test_raises_missing_types_for_missing_angles(self, tmp_path: Path) -> None:
         """build_frc_from_existing raises MissingTypesError for missing angle types."""
@@ -271,7 +271,7 @@ class TestBuildFrcFromExisting:
             )
 
         # Error should mention the missing angle
-        assert "cdo-cdc-cdo" in exc_info.value.missing_atom_types
+        assert "cdo-cdc-cdo" in exc_info.value.missing_types
 
     def test_is_byte_deterministic(self, tmp_path: Path) -> None:
         """build_frc_from_existing produces identical output for same input."""
