@@ -103,8 +103,11 @@ def diff_tables(
             for col in numeric_cols:
                 if col not in left_df.columns or col not in right_df.columns:
                     continue
-                lv = float(left_row[col]) if left_row[col] is not None else 0.0
-                rv = float(right_row[col]) if right_row[col] is not None else 0.0
+                import pandas as pd
+                lv_raw = left_row[col]
+                rv_raw = right_row[col]
+                lv = float(lv_raw) if lv_raw is not None and lv_raw is not pd.NA and not (isinstance(lv_raw, float) and lv_raw != lv_raw) else 0.0
+                rv = float(rv_raw) if rv_raw is not None and rv_raw is not pd.NA and not (isinstance(rv_raw, float) and rv_raw != rv_raw) else 0.0
                 if abs(lv) < 1e-15 and abs(rv) < 1e-15:
                     continue
                 denom = max(abs(lv), abs(rv), 1e-15)
