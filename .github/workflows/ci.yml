@@ -30,7 +30,7 @@ jobs:
         run: pytest -q --tb=short
 
       - name: Lint with ruff
-        run: ruff check src/upm/ --select E,F,W
+        run: ruff check src/upm/
 
       - name: Type check with mypy
         run: mypy src/upm/ --ignore-missing-imports --no-error-summary || true

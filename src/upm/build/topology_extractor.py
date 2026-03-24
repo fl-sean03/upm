@@ -24,7 +24,6 @@ from itertools import combinations
 from pathlib import Path
 from typing import TYPE_CHECKING, FrozenSet
 
-import pandas as pd
 
 if TYPE_CHECKING:
     from usm.core.model import USM

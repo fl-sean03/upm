@@ -12,7 +12,6 @@ These are used by the main builder functions in frc_builders.py.
 from __future__ import annotations
 
 import re
-from typing import Any
 
 
 # =============================================================================
