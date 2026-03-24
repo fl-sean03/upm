@@ -15,6 +15,6 @@ __pycache__/
 .venv/
 venv/
 
-# Build outputs
-build/
-dist/
+# Build outputs (top-level only, not src/upm/build/)
+/build/
+/dist/
