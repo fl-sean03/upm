@@ -430,7 +430,6 @@ def normalize_tables(tables: dict[str, "pd.DataFrame"]) -> dict[str, "pd.DataFra
 
     Unknown table names are passed through unchanged.
     """
-    import pandas as pd
 
     if not isinstance(tables, dict):
         raise TypeError(f"tables: expected dict[str, DataFrame], got {type(tables).__name__}")

@@ -24,6 +24,9 @@ def _require_df(obj: Any, *, table: str) -> "Any":
 
 def _fmt_float(x: Any) -> str:
     """Stable, compact formatting for frc text (locked in tests)."""
+    import pandas as pd
+    if x is None or x is pd.NA or (isinstance(x, float) and x != x):
+        return "0"
     return ("%.8g" % float(x)).rstrip()
 
 

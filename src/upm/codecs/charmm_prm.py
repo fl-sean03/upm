@@ -57,9 +57,6 @@ def write_prm(
 
     Returns:
         Output path as string.
-
-    Raises:
-        NotImplementedError: Writer not yet implemented in v2.0a.
     """
     p = Path(path)
     text = write_prm_text(tables, raw_sections=raw_sections)

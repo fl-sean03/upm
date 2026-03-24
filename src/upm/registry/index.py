@@ -5,7 +5,6 @@ Provides a unified search interface across all discovered parameter packages.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 from upm.registry.discovery import DiscoveredPackage
