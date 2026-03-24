@@ -40,13 +40,19 @@ def _register_commands() -> None:
     from upm.cli.commands import derive_req as derive_req_cmd
     from upm.cli.commands import export_frc as export_frc_cmd
     from upm.cli.commands import import_frc as import_frc_cmd
+    from upm.cli.commands import import_prm as import_prm_cmd
     from upm.cli.commands import validate_pkg as validate_pkg_cmd
+    from upm.cli.commands import search as search_cmd
+    from upm.cli.commands import diff_cmd
 
     import_frc_cmd.register(app)
+    import_prm_cmd.register(app)
     validate_pkg_cmd.register(app)
     export_frc_cmd.register(app)
     derive_req_cmd.register(app)
     build_frc_cmd.register(app)
+    search_cmd.register(app)
+    diff_cmd.register(app)
 
 
 _register_commands()
