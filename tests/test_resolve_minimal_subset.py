@@ -89,7 +89,9 @@ def test_at2_resolve_minimal_subset_and_export_reimport(tmp_path: Path) -> None:
     assert list(tables_min["angles"]["t2"]) == ["c3"]
     assert list(tables_min["angles"]["t3"]) == ["h"]
 
-    assert unknown_min == []
+    # Preamble/define sections are expected as unknown after codec split
+    data_unknown = [u for u in unknown_min if not u["header"].startswith(("#preamble", "#define", "#version"))]
+    assert data_unknown == []
 
     # If raw sections are requested, unknown sections must roundtrip deterministically.
     out_path_raw = tmp_path / "min_with_raw.frc"
@@ -179,4 +181,5 @@ def test_minimal_export_from_bundle_matches_requirements_exactly(tmp_path: Path)
     assert list(tables_min["angles"]["t1"]) == ["h"]
     assert list(tables_min["angles"]["t2"]) == ["c3"]
     assert list(tables_min["angles"]["t3"]) == ["h"]
-    assert unknown_min == []
+    data_unknown = [u for u in unknown_min if not u["header"].startswith(("#preamble", "#define", "#version"))]
+    assert data_unknown == []

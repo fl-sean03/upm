@@ -75,7 +75,9 @@ def test_build_frc_nonbond_only_emits_only_required_sections_and_roundtrips(tmp_
     assert "#quadratic_angle" not in text
 
     tables, unknown = parse_frc_text(text)
-    assert unknown == []
+    # Preamble/define sections are expected as unknown after codec split
+    data_unknown = [u for u in unknown if not u["header"].startswith(("#preamble", "#define", "#version"))]
+    assert data_unknown == []
 
     atom_types = tables["atom_types"].copy()
 
@@ -108,5 +110,8 @@ def test_build_frc_nonbond_only_emits_only_required_sections_and_roundtrips(tmp_
         "notes",
     ]
     assert list(atom_types.columns) == expected_cols
-    pd.testing.assert_series_equal(atom_types["vdw_style"], pd.Series(["lj_ab_12_6", "lj_ab_12_6"], dtype="string"))
+    pd.testing.assert_series_equal(
+        atom_types["vdw_style"],
+        pd.Series(["lj_ab_12_6", "lj_ab_12_6"], name="vdw_style", dtype="string"),
+    )
 
