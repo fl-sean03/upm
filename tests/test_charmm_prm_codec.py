@@ -211,3 +211,28 @@ class TestRealCHARMM:
         df = tables["atom_types"]
         nonzero_a = (df["lj_a"].astype(float) > 0).sum()
         assert nonzero_a > 100, f"Only {nonzero_a} atom types have nonzero lj_a"
+
+    def test_write_read_roundtrip(self, tmp_path: Path) -> None:
+        """Semantic roundtrip: parse → write → parse → compare tables."""
+        from upm.codecs.charmm_prm import write_prm
+
+        tables1, raw1 = read_prm(_ASSET_PRM)
+        out_path = tmp_path / "roundtrip.prm"
+        write_prm(out_path, tables=tables1, raw_sections=raw1)
+
+        tables2, _raw2 = read_prm(out_path)
+
+        # Atom types count should match
+        assert len(tables2["atom_types"]) == len(tables1["atom_types"])
+        # Bonds count should match
+        assert len(tables2["bonds"]) == len(tables1["bonds"])
+        # LJ params should roundtrip accurately
+        for at in ["AU", "AG", "CT1"]:
+            row1 = tables1["atom_types"]
+            row2 = tables2["atom_types"]
+            match1 = row1[row1["atom_type"] == at]
+            match2 = row2[row2["atom_type"] == at]
+            if len(match1) > 0 and len(match2) > 0:
+                a1 = float(match1.iloc[0]["lj_a"])
+                a2 = float(match2.iloc[0]["lj_a"])
+                assert a2 == pytest.approx(a1, rel=1e-4), f"{at} lj_a mismatch"

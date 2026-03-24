@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from upm.codecs._charmm_parser import parse_prm_text
+from upm.codecs._charmm_writer import write_prm_text
 from upm.core.tables import normalize_tables
 
 
@@ -60,10 +61,10 @@ def write_prm(
     Raises:
         NotImplementedError: Writer not yet implemented in v2.0a.
     """
-    raise NotImplementedError(
-        "CHARMM .prm writer is planned for UPM v2.0. "
-        "Use read_prm() for parsing; export via write_frc() for now."
-    )
+    p = Path(path)
+    text = write_prm_text(tables, raw_sections=raw_sections)
+    p.write_text(text, encoding="utf-8")
+    return str(p)
 
 
 __all__ = [
