@@ -50,6 +50,9 @@ from upm.codecs._frc_writer import (
     _format_nonbond_12_6_section_from_atom_types,
     _format_quadratic_angle_section,
     _format_quadratic_bond_section,
+    _format_torsion_1_section,
+    _format_out_of_plane_section,
+    _format_equivalence_section,
     _require_df,
 )
 
@@ -241,7 +244,19 @@ def write_frc(
         df = _require_df(norm_tables["angles"], table="angles")
         lines.extend(_format_quadratic_angle_section(df))
 
-    # For v0.1 export, we emit nonbond parameters from atom_types (lj_a/lj_b).
+    if "torsions" in norm_tables and norm_tables["torsions"] is not None:
+        df = _require_df(norm_tables["torsions"], table="torsions")
+        lines.extend(_format_torsion_1_section(df))
+
+    if "out_of_plane" in norm_tables and norm_tables["out_of_plane"] is not None:
+        df = _require_df(norm_tables["out_of_plane"], table="out_of_plane")
+        lines.extend(_format_out_of_plane_section(df))
+
+    if "equivalences" in norm_tables and norm_tables["equivalences"] is not None:
+        df = _require_df(norm_tables["equivalences"], table="equivalences")
+        lines.extend(_format_equivalence_section(df))
+
+    # Emit nonbond parameters from atom_types (lj_a/lj_b).
     if "atom_types" in norm_tables and norm_tables["atom_types"] is not None:
         df = _require_df(norm_tables["atom_types"], table="atom_types")
         lines.extend(_format_nonbond_12_6_section_from_atom_types(df))

@@ -163,3 +163,53 @@ def _format_nonbond_12_6_section_from_atom_types(df: Any, *, label: str = "cvff"
         # Format: ver ref atom_type A B
         lines.append(f"  {ver}  {ref}  {at}  {a}  {b}")
     return lines
+
+
+def _format_torsion_1_section(df: Any, *, label: str = "cvff") -> list[str]:
+    """Format #torsion_1 section for export.
+
+    Format: ver ref t1 t2 t3 t4 kphi n phi0
+    """
+    header = f"#torsion_1\t{label}" if label else "#torsion_1"
+    lines: list[str] = [header]
+    for _, row in df.iterrows():
+        t1, t2, t3, t4 = str(row["t1"]), str(row["t2"]), str(row["t3"]), str(row["t4"])
+        kphi = _fmt_float(row["kphi"])
+        n = str(int(row["n"]))
+        phi0 = _fmt_float(row["phi0"])
+        lines.append(f"  1.0  1  {t1}  {t2}  {t3}  {t4}  {kphi}  {n}  {phi0}")
+    return lines
+
+
+def _format_out_of_plane_section(df: Any, *, label: str = "cvff") -> list[str]:
+    """Format #out_of_plane section for export.
+
+    Format: ver ref t1 t2 t3 t4 kchi n chi0
+    """
+    header = f"#out_of_plane\t{label}" if label else "#out_of_plane"
+    lines: list[str] = [header]
+    for _, row in df.iterrows():
+        t1, t2, t3, t4 = str(row["t1"]), str(row["t2"]), str(row["t3"]), str(row["t4"])
+        kchi = _fmt_float(row["kchi"])
+        n = str(int(row["n"]))
+        chi0 = _fmt_float(row["chi0"])
+        lines.append(f"  1.0  1  {t1}  {t2}  {t3}  {t4}  {kchi}  {n}  {chi0}")
+    return lines
+
+
+def _format_equivalence_section(df: Any, *, label: str = "cvff") -> list[str]:
+    """Format #equivalence section for export.
+
+    Format: ver ref atom_type nonb bond angle torsion oop
+    """
+    header = f"#equivalence\t{label}" if label else "#equivalence"
+    lines: list[str] = [header]
+    for _, row in df.iterrows():
+        at = str(row["atom_type"])
+        nonb = str(row["nonb"])
+        bond = str(row["bond"])
+        angle = str(row["angle"])
+        torsion = str(row["torsion"])
+        oop = str(row["oop"])
+        lines.append(f"  1.0  1  {at}  {nonb}  {bond}  {angle}  {torsion}  {oop}")
+    return lines

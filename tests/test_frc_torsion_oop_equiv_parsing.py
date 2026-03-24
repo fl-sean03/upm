@@ -107,6 +107,32 @@ def test_torsion_sections_not_in_unknown() -> None:
         )
 
 
+def test_frc_roundtrip_torsions_oop_equiv(tmp_path: "Path") -> None:
+    """Parse → write → parse roundtrip preserves torsion/OOP/equiv data."""
+    from pathlib import Path
+    from upm.codecs.msi_frc import write_frc, read_frc
+
+    tables1, _unknown1 = parse_frc_text(_FRC_WITH_TORSIONS, validate=False)
+
+    out_path = tmp_path / "roundtrip.frc"
+    write_frc(out_path, tables=tables1, mode="full")
+
+    tables2, _unknown2 = read_frc(out_path, validate=False)
+
+    # Torsions should roundtrip
+    assert "torsions" in tables2
+    assert len(tables2["torsions"]) == len(tables1["torsions"])
+
+    # OOP should roundtrip
+    assert "out_of_plane" in tables2
+    assert len(tables2["out_of_plane"]) == len(tables1["out_of_plane"])
+
+    # Equivalences should roundtrip
+    assert "equivalences" in tables2
+    assert len(tables2["equivalences"]) == len(tables1["equivalences"])
+    assert list(tables2["equivalences"]["atom_type"]) == list(tables1["equivalences"]["atom_type"])
+
+
 def test_wildcard_torsion_type_preserved() -> None:
     """Wildcard * atom types in torsions should be preserved."""
     tables, _unknown = parse_frc_text(_FRC_WITH_TORSIONS, validate=False)
