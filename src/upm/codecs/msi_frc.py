@@ -34,6 +34,9 @@ from upm.core.validate import validate_tables
 # Import internal helpers from private modules
 from upm.codecs._frc_parser import (
     _build_tables,
+    _parse_torsion_1,
+    _parse_out_of_plane,
+    _parse_equivalence,
     _coerce_unknown_sections,
     _parse_atom_types,
     _parse_bond_increments,
@@ -89,6 +92,9 @@ def parse_frc_text(
     bonds_rows: list[dict[str, Any]] = []
     angles_rows: list[dict[str, Any]] = []
     bond_increments_rows: list[dict[str, Any]] = []
+    torsions_rows: list[dict[str, Any]] = []
+    oop_rows: list[dict[str, Any]] = []
+    equivalences_rows: list[dict[str, Any]] = []
 
     # nonbond map: atom_type -> (lj_a, lj_b)
     nonbond_params: dict[str, tuple[float, float]] = {}
@@ -113,6 +119,12 @@ def parse_frc_text(
             nonbond_params.update(nb)
         elif header_key == "#bond_increments":
             bond_increments_rows.extend(_parse_bond_increments(body_lines))
+        elif header_key == "#torsion_1":
+            torsions_rows.extend(_parse_torsion_1(body_lines, source_default=header_suffix))
+        elif header_key in ("#out_of_plane", "#wilson_out_of_plane"):
+            oop_rows.extend(_parse_out_of_plane(body_lines, source_default=header_suffix))
+        elif header_key == "#equivalence":
+            equivalences_rows.extend(_parse_equivalence(body_lines))
         else:
             # Unknown/unsupported section: preserve in encounter order, body-only.
             unknown_sections.append({"header": header_raw, "body": list(body_lines)})
@@ -120,6 +132,9 @@ def parse_frc_text(
     tables = _build_tables(
         atom_types_rows, bonds_rows, angles_rows, nonbond_params,
         bond_increments_rows=bond_increments_rows if bond_increments_rows else None,
+        torsions_rows=torsions_rows if torsions_rows else None,
+        oop_rows=oop_rows if oop_rows else None,
+        equivalences_rows=equivalences_rows if equivalences_rows else None,
     )
 
     # Normalize for deterministic downstream behavior.
