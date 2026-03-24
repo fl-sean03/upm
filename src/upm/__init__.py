@@ -9,7 +9,7 @@ from __future__ import annotations
 from upm.core import Requirements
 from upm.io import read_requirements_json
 
-__version__ = "2.0.0a0"
+__version__ = "2.0.0"
 
 __all__ = [
     "__version__",
