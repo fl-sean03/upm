@@ -21,7 +21,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from upm.core.model import canonicalize_angle_key, canonicalize_bond_key
+from upm.core.model import (
+    canonicalize_angle_key,
+    canonicalize_bond_key,
+    canonicalize_dihedral_key,
+)
 
 if TYPE_CHECKING:  # pragma: no cover
     import pandas as pd
@@ -60,6 +64,36 @@ TABLE_SCHEMAS: dict[str, dict[str, str]] = {
         "theta0_deg": "Float64",
         "source": "string",
     },
+    "torsions": {
+        "t1": "string",
+        "t2": "string",
+        "t3": "string",
+        "t4": "string",
+        "style": "string",
+        "kphi": "Float64",
+        "n": "Int32",
+        "phi0": "Float64",
+        "source": "string",
+    },
+    "out_of_plane": {
+        "t1": "string",
+        "t2": "string",
+        "t3": "string",
+        "t4": "string",
+        "style": "string",
+        "kchi": "Float64",
+        "n": "Int32",
+        "chi0": "Float64",
+        "source": "string",
+    },
+    "equivalences": {
+        "atom_type": "string",
+        "nonb": "string",
+        "bond": "string",
+        "angle": "string",
+        "torsion": "string",
+        "oop": "string",
+    },
     "pair_overrides": {
         "t1": "string",
         "t2": "string",
@@ -73,6 +107,9 @@ TABLE_KEYS: dict[str, list[str]] = {
     "atom_types": ["atom_type"],
     "bonds": ["t1", "t2", "style"],
     "angles": ["t1", "t2", "t3", "style"],
+    "torsions": ["t1", "t2", "t3", "t4", "style"],
+    "out_of_plane": ["t1", "t2", "t3", "t4", "style"],
+    "equivalences": ["atom_type"],
     "pair_overrides": ["t1", "t2"],
 }
 
@@ -298,6 +335,96 @@ def normalize_angles(df: "pd.DataFrame") -> "pd.DataFrame":
     return out
 
 
+def normalize_torsions(df: "pd.DataFrame") -> "pd.DataFrame":
+    """Return a canonicalized `torsions` table.
+
+    Canonicalization: dihedral keys canonicalized via forward/reverse comparison
+    (using `upm.core.model.canonicalize_dihedral_key`).
+    """
+    import pandas as pd
+
+    if not isinstance(df, pd.DataFrame):
+        raise TypeError(f"torsions: expected pandas.DataFrame, got {type(df).__name__}")
+
+    table = "torsions"
+    schema = TABLE_SCHEMAS[table]
+    required_cols = list(schema.keys())
+
+    _require_columns(df, required=required_cols, table=table)
+    _reject_extra_columns(df, allowed=required_cols, table=table)
+
+    out = df.copy(deep=True)
+    out = _cast_to_schema(out, schema=schema)
+
+    t1_vals = out["t1"].tolist()
+    t2_vals = out["t2"].tolist()
+    t3_vals = out["t3"].tolist()
+    t4_vals = out["t4"].tolist()
+
+    new_t1, new_t2, new_t3, new_t4 = [], [], [], []
+    for a, b, c, d in zip(t1_vals, t2_vals, t3_vals, t4_vals):
+        if any(v is pd.NA for v in (a, b, c, d)):
+            new_t1.append(a); new_t2.append(b); new_t3.append(c); new_t4.append(d)
+            continue
+        k1, k2, k3, k4 = canonicalize_dihedral_key(str(a), str(b), str(c), str(d))
+        new_t1.append(k1); new_t2.append(k2); new_t3.append(k3); new_t4.append(k4)
+
+    out["t1"] = pd.Series(new_t1, dtype="string")
+    out["t2"] = pd.Series(new_t2, dtype="string")
+    out["t3"] = pd.Series(new_t3, dtype="string")
+    out["t4"] = pd.Series(new_t4, dtype="string")
+
+    out = _reorder_columns(out, column_order=TABLE_COLUMN_ORDER[table])
+    out = _sort_canonical(out, keys=TABLE_KEYS[table])
+    return out
+
+
+def normalize_out_of_plane(df: "pd.DataFrame") -> "pd.DataFrame":
+    """Return a canonicalized `out_of_plane` (improper) table.
+
+    No endpoint canonicalization for OOP — the atom ordering is significant
+    (central atom vs peripheral atoms have different roles).
+    """
+    import pandas as pd
+
+    if not isinstance(df, pd.DataFrame):
+        raise TypeError(f"out_of_plane: expected pandas.DataFrame, got {type(df).__name__}")
+
+    table = "out_of_plane"
+    schema = TABLE_SCHEMAS[table]
+    required_cols = list(schema.keys())
+
+    _require_columns(df, required=required_cols, table=table)
+    _reject_extra_columns(df, allowed=required_cols, table=table)
+
+    out = df.copy(deep=True)
+    out = _cast_to_schema(out, schema=schema)
+    out = _reorder_columns(out, column_order=TABLE_COLUMN_ORDER[table])
+    out = _sort_canonical(out, keys=TABLE_KEYS[table])
+    return out
+
+
+def normalize_equivalences(df: "pd.DataFrame") -> "pd.DataFrame":
+    """Return a canonicalized `equivalences` table."""
+    import pandas as pd
+
+    if not isinstance(df, pd.DataFrame):
+        raise TypeError(f"equivalences: expected pandas.DataFrame, got {type(df).__name__}")
+
+    table = "equivalences"
+    schema = TABLE_SCHEMAS[table]
+    required_cols = list(schema.keys())
+
+    _require_columns(df, required=required_cols, table=table)
+    _reject_extra_columns(df, allowed=required_cols, table=table)
+
+    out = df.copy(deep=True)
+    out = _cast_to_schema(out, schema=schema)
+    out = _reorder_columns(out, column_order=TABLE_COLUMN_ORDER[table])
+    out = _sort_canonical(out, keys=TABLE_KEYS[table])
+    return out
+
+
 def normalize_tables(tables: dict[str, "pd.DataFrame"]) -> dict[str, "pd.DataFrame"]:
     """Normalize any recognized tables in `tables` and return a new dict.
 
@@ -316,6 +443,12 @@ def normalize_tables(tables: dict[str, "pd.DataFrame"]) -> dict[str, "pd.DataFra
             out[name] = normalize_bonds(df)
         elif name == "angles":
             out[name] = normalize_angles(df)
+        elif name == "torsions":
+            out[name] = normalize_torsions(df)
+        elif name == "out_of_plane":
+            out[name] = normalize_out_of_plane(df)
+        elif name == "equivalences":
+            out[name] = normalize_equivalences(df)
         else:
             out[name] = df
     return out
